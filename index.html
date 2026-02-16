@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('stylesheet'); ?>
+</head>
+<body>
+
+<!-- ===== Top Navigation ===== -->
+<header class="top-bar">
+  <h1 class="top-bar__title">VDOE Testing Coordinator</h1>
+  <nav class="top-bar__nav">
+    <button class="nav-btn active" data-view="students">Students</button>
+    <button class="nav-btn" data-view="rooms">Rooms</button>
+    <button class="nav-btn" data-view="assign">Assign</button>
+  </nav>
+</header>
+
+<!-- ===== Toast / Notifications ===== -->
+<div id="toast" class="toast hidden"></div>
+
+<!-- ===== Loading Overlay ===== -->
+<div id="loading" class="loading-overlay hidden">
+  <div class="spinner"></div>
+  <p>Loading&hellip;</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- VIEW 1 — Student Management                                   -->
+<!-- ============================================================ -->
+<section id="view-students" class="view">
+  <div class="card">
+    <h2>Add / Edit Student</h2>
+    <form id="student-form" autocomplete="off">
+      <div class="form-row">
+        <label>Student Name<input type="text" id="sf-name" required></label>
+        <label>Student ID<input type="text" id="sf-id" required></label>
+        <label>Grade
+          <select id="sf-grade" required>
+            <option value="">—</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+      </div>
+
+      <fieldset class="form-row">
+        <legend>Accommodations</legend>
+        <label class="cb"><input type="checkbox" id="sf-smallgroup"> Small Group</label>
+        <label class="cb"><input type="checkbox" id="sf-readaloud"> Read Aloud</label>
+        <label class="cb"><input type="checkbox" id="sf-onetoone"> 1:1 Testing</label>
+        <label class="cb"><input type="checkbox" id="sf-proximity"> Proximity to Proctor</label>
+        <label class="cb"><input type="checkbox" id="sf-prompting"> Prompting</label>
+      </fieldset>
+
+      <div class="form-row">
+        <label>Other Accommodations<input type="text" id="sf-other" placeholder="e.g. Extended Time"></label>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary" id="sf-submit-btn">Add Student</button>
+        <button type="button" class="btn btn--secondary" id="sf-cancel-btn" style="display:none">Cancel Edit</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Student Roster</h2>
+    <div class="filter-bar">
+      <label>Filter Grade:
+        <select id="roster-grade-filter">
+          <option value="">All</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>Filter Accommodation:
+        <select id="roster-acc-filter">
+          <option value="">All</option>
+          <option value="smallGroup">Small Group</option>
+          <option value="readAloud">Read Aloud</option>
+          <option value="oneToOne">1:1 Testing</option>
+          <option value="proximity">Proximity</option>
+          <option value="prompting">Prompting</option>
+        </select>
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table id="student-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Gr</th><th>Accommodations</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 2 — Room Management                                      -->
+<!-- ============================================================ -->
+<section id="view-rooms" class="view hidden">
+  <div class="card">
+    <h2>Add Room</h2>
+    <form id="room-form" autocomplete="off">
+      <div class="form-row">
+        <label>Room Name<input type="text" id="rf-name" required></label>
+        <label>Rows<input type="number" id="rf-rows" min="1" max="20" value="5" required></label>
+        <label>Columns<input type="number" id="rf-cols" min="1" max="20" value="6" required></label>
+        <label>Max Capacity (0 = auto)<input type="number" id="rf-cap" min="0" value="0"></label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary">Add Room</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Rooms</h2>
+    <div id="room-list" class="room-cards"></div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 3 — Drag-and-Drop Assignment                             -->
+<!-- ============================================================ -->
+<section id="view-assign" class="view hidden">
+  <div class="assign-layout">
+
+    <!-- Left Panel — Unassigned Students -->
+    <div class="panel panel--students card">
+      <h2>Unassigned Students</h2>
+      <div class="filter-bar">
+        <label>Grade:
+          <select id="assign-grade-filter">
+            <option value="">All</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+        <label>Accommodation:
+          <select id="assign-acc-filter">
+            <option value="">All</option>
+            <option value="smallGroup">Small Group</option>
+            <option value="readAloud">Read Aloud</option>
+            <option value="oneToOne">1:1 Testing</option>
+            <option value="proximity">Proximity</option>
+            <option value="prompting">Prompting</option>
+          </select>
+        </label>
+      </div>
+      <ul id="unassigned-list" class="student-list"></ul>
+    </div>
+
+    <!-- Right Panel — Room Grids -->
+    <div class="panel panel--grid card">
+      <div class="grid-toolbar">
+        <label>Room:
+          <select id="grid-room-select"></select>
+        </label>
+        <button class="btn btn--accent" id="btn-auto-suggest">Auto-Suggest</button>
+        <label>Small-Group Limit:
+          <input type="number" id="sg-limit" value="10" min="1" max="30" style="width:60px">
+        </label>
+        <button class="btn btn--primary" id="btn-finalize">Finalize Layout</button>
+      </div>
+      <div class="proctor-label">PROCTOR STATION (Row 1)</div>
+      <div id="grid-container" class="grid-container"></div>
+      <div id="grid-warnings" class="warnings"></div>
+    </div>
+  </div>
+</section>
+
+<?!= include('javascript'); ?>
+</body>
+</html>
