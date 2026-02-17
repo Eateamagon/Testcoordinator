@@ -21,8 +21,8 @@ var APP = {
 };
 
 var GRID = 30;
-var CANVAS_COLS = 40;
-var CANVAS_ROWS = 40;
+var CANVAS_COLS = 80;
+var CANVAS_ROWS = 80;
 
 var ROOM_TYPES = {
   classroom:  { label: 'Classroom',  color: '#3b82f6', bg: '#dbeafe',  icon: '\u{1F4DA}' },
@@ -55,10 +55,10 @@ document.addEventListener('DOMContentLoaded', function () {
   refreshAll();
 });
 
-function refreshAll() {
-  showLoading(true);
+function refreshAll(quiet) {
+  if (!quiet) showLoading(true);
   var pending = 7;
-  function done() { pending--; if (pending <= 0) { renderAll(); showLoading(false); } }
+  function done() { pending--; if (pending <= 0) { renderAll(); if (!quiet) showLoading(false); } }
   google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); }).withFailureHandler(function () { done(); }).getStudents();
   google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); }).withFailureHandler(function () { done(); }).getTeachers();
   google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); }).withFailureHandler(function () { done(); }).getRooms();
@@ -101,12 +101,12 @@ function initFloorSwitcher() {
 function filterByGrade(arr, gradeKey) {
   gradeKey = gradeKey || 'grade';
   if (!APP.gradeFilter) return arr;
-  return arr.filter(function (item) { var g = item[gradeKey]; return !g || g === APP.gradeFilter; });
+  return arr.filter(function (item) { var g = item[gradeKey]; return !g || String(g) === String(APP.gradeFilter); });
 }
 
 function filterByFloor(arr) {
   if (!APP.floorFilter) return arr;
-  return arr.filter(function (item) { return !item.floor || item.floor === APP.floorFilter; });
+  return arr.filter(function (item) { return !item.floor || String(item.floor) === String(APP.floorFilter); });
 }
 
 function filterRooms(arr) {
@@ -116,7 +116,7 @@ function filterRooms(arr) {
 
 function filterStudentsByGrade(arr) {
   if (!APP.gradeFilter) return arr;
-  return arr.filter(function (s) { return s.grade === APP.gradeFilter; });
+  return arr.filter(function (s) { return String(s.grade) === String(APP.gradeFilter); });
 }
 
 function isFillerCell(roomName, row, col) {
@@ -402,14 +402,82 @@ function confirmDeleteRoom(name) {
 // Staging Ground
 // =========================================================================
 function initStagingView() {
-  document.getElementById('btn-create-group').addEventListener('click', function () {
+  var createBtn = document.getElementById('btn-create-group');
+  createBtn.addEventListener('click', function () {
     var name = document.getElementById('new-group-name').value.trim();
     if (!name) { toast('Enter a group name'); return; }
-    showLoading(true);
-    google.script.run.withSuccessHandler(function () { document.getElementById('new-group-name').value = ''; refreshAll(); toast('Group created'); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).createStagingGroup(name);
+    disableBtn(createBtn, 'Creating...');
+    google.script.run.withSuccessHandler(function () {
+      document.getElementById('new-group-name').value = '';
+      enableBtn(createBtn);
+      refreshAll(true);
+      toast('Group created');
+    }).withFailureHandler(function (e) {
+      toast('Error: ' + e.message);
+      enableBtn(createBtn);
+    }).createStagingGroup(name);
   });
   document.getElementById('staging-acc-filter').addEventListener('change', renderStagingView);
+
+  // Event delegation for staging group buttons (set up ONCE here, not in renderStagingGroups)
+  var container = document.getElementById('staging-groups-container');
+  container.addEventListener('click', function (e) {
+    var removeBtn = e.target.closest('.btn-remove-staged');
+    var deleteBtn = e.target.closest('.btn-delete-group');
+    var placeBtn = e.target.closest('.btn-place-group');
+    var editBtn = e.target.closest('.btn-edit-accom');
+
+    if (removeBtn) {
+      var gid = removeBtn.dataset.groupId;
+      var sid = removeBtn.dataset.studentId;
+      // Optimistic local update
+      var group = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
+      if (group) {
+        group.studentIds = group.studentIds.filter(function (id) { return id !== sid; });
+        renderStagingView();
+        toast('Removed from group');
+      }
+      google.script.run.withSuccessHandler(function () {})
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
+        .removeStudentFromStagingGroup(gid, sid);
+      return;
+    }
+
+    if (deleteBtn) {
+      var gid = deleteBtn.dataset.groupId;
+      if (!confirm('Delete this staging group?')) return;
+      // Optimistic local update
+      APP.stagingGroups = APP.stagingGroups.filter(function (g) { return g.groupId !== gid; });
+      renderStagingView();
+      toast('Group deleted');
+      google.script.run.withSuccessHandler(function () {})
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
+        .deleteStagingGroup(gid);
+      return;
+    }
+
+    if (placeBtn) {
+      var gid = placeBtn.dataset.groupId;
+      var roomSel = container.querySelector('.staging-room-select[data-group-id="' + gid + '"]');
+      var roomName = roomSel ? roomSel.value : '';
+      if (!roomName) { toast('Select a room first'); return; }
+      disableBtn(placeBtn, 'Placing...');
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) {
+        refreshAll();
+        toast(res.message || 'Group placed');
+      }).withFailureHandler(function (err) {
+        toast('Error: ' + err.message);
+        showLoading(false);
+        enableBtn(placeBtn);
+      }).placeStagingGroupInRoom(gid, roomName);
+      return;
+    }
+
+    if (editBtn) {
+      openAccomModal(editBtn.dataset.studentId);
+    }
+  });
 }
 
 function renderStagingView() { renderStagingStudentList(); renderStagingGroups(); }
@@ -457,9 +525,17 @@ function renderStagingGroups() {
       e.preventDefault(); this.classList.remove('drag-over');
       var payload = e.dataTransfer.getData('text/plain'); if (!payload.startsWith('stage:')) return;
       var sid = payload.replace('stage:', ''); var gid = this.dataset.groupId;
-      showLoading(true);
-      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Student added to group'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addStudentToStagingGroup(gid, sid);
+      // Optimistic local update — no loading overlay
+      var grp = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
+      if (grp && grp.studentIds.indexOf(sid) === -1) {
+        grp.studentIds.push(sid);
+        renderStagingView();
+        toast('Student added to group');
+      }
+      // Silent server sync
+      google.script.run.withSuccessHandler(function () {})
+        .withFailureHandler(function (err) { toast('Error saving: ' + err.message); refreshAll(true); })
+        .addStudentToStagingGroup(gid, sid);
     });
     if (!memberCount) { dropZone.innerHTML = '<p class="muted">Drag students here</p>'; }
     else {
@@ -475,30 +551,7 @@ function renderStagingGroups() {
     }
     div.appendChild(dropZone); container.appendChild(div);
   });
-  container.addEventListener('click', function (e) {
-    var target = e.target;
-    if (target.classList.contains('btn-remove-staged')) {
-      showLoading(true);
-      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Removed from group'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .removeStudentFromStagingGroup(target.dataset.groupId, target.dataset.studentId);
-    }
-    if (target.classList.contains('btn-delete-group')) {
-      if (!confirm('Delete this staging group?')) return; showLoading(true);
-      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Group deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).deleteStagingGroup(target.dataset.groupId);
-    }
-    if (target.classList.contains('btn-place-group')) {
-      var gid = target.dataset.groupId;
-      var roomSel2 = container.querySelector('.staging-room-select[data-group-id="' + gid + '"]');
-      var roomName = roomSel2 ? roomSel2.value : '';
-      if (!roomName) { toast('Select a room first'); return; }
-      showLoading(true);
-      google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message || 'Group placed'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).placeStagingGroupInRoom(gid, roomName);
-    }
-    if (target.classList.contains('btn-edit-accom')) openAccomModal(target.dataset.studentId);
-  });
+  // NOTE: Click delegation is in initStagingView(), not here — avoids duplicate listeners
 }
 
 // =========================================================================
@@ -507,11 +560,11 @@ function renderStagingGroups() {
 function initAssignView() {
   document.getElementById('grid-room-select').addEventListener('change', function () { APP.selectedRoom = this.value; renderGrid(); });
   document.getElementById('assign-acc-filter').addEventListener('change', renderUnassignedList);
-  document.getElementById('btn-auto-suggest').addEventListener('click', runAutoSuggest);
-  document.getElementById('btn-finalize').addEventListener('click', runFinalize);
+  document.getElementById('btn-auto-suggest').addEventListener('click', function () { runAutoSuggest(this); });
+  document.getElementById('btn-finalize').addEventListener('click', function () { runFinalize(this); });
   document.getElementById('filler-mode').addEventListener('change', function () { APP.fillerMode = this.checked; renderGrid(); });
-  document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf'); });
-  document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word'); });
+  document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf', this); });
+  document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word', this); });
 }
 
 function renderAssignView() {
@@ -688,36 +741,39 @@ function renderGrid() {
   warnings.innerHTML = warnMsgs.map(function (m) { return '<p class="warn">' + m + '</p>'; }).join('');
 }
 
-function runAutoSuggest() {
+function runAutoSuggest(triggerBtn) {
   if (!APP.rooms.length) { toast('Create rooms first'); return; }
   if (!APP.students.length) { toast('Add students first'); return; }
   var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
   var gradeF = APP.gradeFilter || null;
+  disableBtn(triggerBtn, 'Suggesting...');
   showLoading(true);
   google.script.run.withSuccessHandler(function (result) {
-    if (result.error) { toast(result.error); showLoading(false); return; }
+    if (result.error) { toast(result.error); showLoading(false); enableBtn(triggerBtn); return; }
     google.script.run.withSuccessHandler(function () {
-      APP.assignments = result; renderAssignView(); showLoading(false);
+      APP.assignments = result; renderAssignView(); showLoading(false); enableBtn(triggerBtn);
       toast('Auto-suggest: ' + result.length + ' placements' + (gradeF ? ' (Gr ' + gradeF + ')' : ''));
-    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).applyRecommendations(result);
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).generateRecommendations(sgLimit, gradeF);
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).applyRecommendations(result);
+  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateRecommendations(sgLimit, gradeF);
 }
 
-function runFinalize() {
+function runFinalize(triggerBtn) {
   if (!APP.assignments.length) { toast('No assignments to finalize'); return; }
   if (!confirm('Generate finalized layout sheets in the spreadsheet?')) return;
+  disableBtn(triggerBtn, 'Finalizing...');
   showLoading(true);
-  google.script.run.withSuccessHandler(function (res) { showLoading(false); toast(res.message || 'Layout finalized'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).finalizeLayout();
+  google.script.run.withSuccessHandler(function (res) { showLoading(false); enableBtn(triggerBtn); toast(res.message || 'Layout finalized'); })
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).finalizeLayout();
 }
 
 // ---------- Export PDF / Word ----------
 
-function runExport(format) {
+function runExport(format, triggerBtn) {
   if (!APP.assignments.length) { toast('No assignments to export'); return; }
+  disableBtn(triggerBtn, 'Exporting...');
   showLoading(true);
   google.script.run.withSuccessHandler(function (htmlContent) {
-    showLoading(false);
+    showLoading(false); enableBtn(triggerBtn);
     if (format === 'word') {
       // Word (.doc) can be generated from HTML with mso namespace
       var wordHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
@@ -744,19 +800,21 @@ function runExport(format) {
         toast('Pop-up blocked — allow pop-ups for this site');
       }
     }
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).generateExportHTML();
+  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateExportHTML();
 }
 
 // =========================================================================
 // Templates
 // =========================================================================
 function initTemplateView() {
-  document.getElementById('btn-save-template').addEventListener('click', function () {
+  var saveBtn = document.getElementById('btn-save-template');
+  saveBtn.addEventListener('click', function () {
     var name = document.getElementById('tpl-name').value.trim();
     if (!name) { toast('Enter a template name'); return; }
+    disableBtn(saveBtn, 'Saving...');
     showLoading(true);
-    google.script.run.withSuccessHandler(function (res) { document.getElementById('tpl-name').value = ''; refreshAll(); toast(res.message); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).saveTemplate(name);
+    google.script.run.withSuccessHandler(function (res) { document.getElementById('tpl-name').value = ''; enableBtn(saveBtn); refreshAll(); toast(res.message); })
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(saveBtn); }).saveTemplate(name);
   });
 }
 
@@ -812,6 +870,18 @@ function toast(msg) {
 
 function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
 
+function disableBtn(btn, busyText) {
+  if (!btn) return;
+  btn.disabled = true;
+  btn._origText = btn.textContent;
+  if (busyText) btn.textContent = busyText;
+}
+function enableBtn(btn) {
+  if (!btn) return;
+  btn.disabled = false;
+  if (btn._origText) { btn.textContent = btn._origText; delete btn._origText; }
+}
+
 // =========================================================================
 // School Layout Designer (Drawing Tool)
 // =========================================================================
@@ -839,6 +909,7 @@ function initDesigner() {
       document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.remove('active'); });
       btn.classList.add('active');
       APP.designerFloor = btn.dataset.dfloor;
+      toast('New rooms will be placed on Floor ' + APP.designerFloor);
     });
   });
 
@@ -863,9 +934,18 @@ function initDesigner() {
   });
 
   // Action buttons
-  document.getElementById('btn-example-school').addEventListener('click', loadExampleSchool);
-  document.getElementById('btn-import-rooms').addEventListener('click', importDesignerToRooms);
-  document.getElementById('btn-clear-designer').addEventListener('click', function () {
+  var exSchoolBtn = document.getElementById('btn-example-school');
+  exSchoolBtn.addEventListener('click', function () {
+    disableBtn(exSchoolBtn, 'Loading...');
+    loadExampleSchool();
+    enableBtn(exSchoolBtn);
+  });
+  var importBtn = document.getElementById('btn-import-rooms');
+  importBtn.addEventListener('click', function () {
+    importDesignerToRooms(importBtn);
+  });
+  var clearBtn = document.getElementById('btn-clear-designer');
+  clearBtn.addEventListener('click', function () {
     if (!APP.designerRooms.length || confirm('Clear all rooms from the canvas?')) {
       APP.designerRooms = [];
       APP.designerSelectedId = null;
@@ -874,7 +954,8 @@ function initDesigner() {
       toast('Canvas cleared');
     }
   });
-  document.getElementById('btn-load-example-data').addEventListener('click', loadAllExampleData);
+  var exDataBtn = document.getElementById('btn-load-example-data');
+  exDataBtn.addEventListener('click', function () { loadAllExampleData(exDataBtn); });
 }
 
 function snapGrid(px) { return Math.round(px / GRID); }
@@ -1162,13 +1243,14 @@ function capacityToGrid(cap) {
   return { rows: rows, columns: cols };
 }
 
-function importDesignerToRooms() {
+function importDesignerToRooms(triggerBtn) {
   var importable = APP.designerRooms.filter(function (r) {
     return r.type !== 'hallway' && r.type !== 'restroom' && r.type !== 'storage' && r.capacity > 0;
   });
   if (!importable.length) { toast('No importable rooms on canvas'); return; }
   if (!confirm('Import ' + importable.length + ' rooms to the Rooms tab? (Hallways, restrooms, and storage are skipped.)')) return;
 
+  disableBtn(triggerBtn, 'Importing...');
   showLoading(true);
   var pending = importable.length;
   var added = 0;
@@ -1188,23 +1270,26 @@ function importDesignerToRooms() {
     }).addRoom(data);
   });
 
-  function finishImport(count) { refreshAll(); toast(count + ' room(s) imported to Rooms tab'); }
+  function finishImport(count) { enableBtn(triggerBtn); refreshAll(); toast(count + ' room(s) imported to Rooms tab'); }
 }
 
 // =========================================================================
 // Load Example Data (All Views)
 // =========================================================================
 
-function loadAllExampleData() {
+function loadAllExampleData(triggerBtn) {
   if (!confirm('Load example data? This will add example teachers, rooms, and students to demonstrate all features.')) return;
+  disableBtn(triggerBtn, 'Loading...');
   showLoading(true);
   google.script.run.withSuccessHandler(function (res) {
+    enableBtn(triggerBtn);
     refreshAll();
     loadExampleSchool();
     toast(res.message || 'Example data loaded');
   }).withFailureHandler(function (e) {
     toast('Error: ' + e.message);
     showLoading(false);
+    enableBtn(triggerBtn);
   }).loadExampleData();
 }
 </script>
