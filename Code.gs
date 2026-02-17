@@ -68,6 +68,12 @@ function ensureSheets_() {
   getOrCreateSheet_('FillerCells', [
     'RoomName', 'Row', 'Column'
   ]);
+  getOrCreateSheet_('DesignerLayouts', [
+    'LayoutName', 'DataJSON'
+  ]);
+  getOrCreateSheet_('Backups', [
+    'BackupName', 'CreatedAt', 'DataJSON'
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -942,6 +948,188 @@ function loadExampleData() {
   }
 
   return { success: true, message: 'Example data loaded — 10 teachers, 14 rooms, 23 students with accommodations.' };
+}
+
+// ---------------------------------------------------------------------------
+// Designer Layout CRUD
+// ---------------------------------------------------------------------------
+
+function saveDesignerLayout(name, roomsJson) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('DesignerLayouts');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) {
+      sheet.getRange(i + 1, 2).setValue(roomsJson);
+      return { success: true, message: 'Layout "' + name + '" updated.' };
+    }
+  }
+  sheet.appendRow([name, roomsJson]);
+  return { success: true, message: 'Layout "' + name + '" saved.' };
+}
+
+function getDesignerLayouts() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('DesignerLayouts');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var layouts = [];
+  for (var i = 1; i < data.length; i++) {
+    var rooms = JSON.parse(data[i][1] || '[]');
+    layouts.push({
+      layoutName: String(data[i][0]),
+      roomCount: rooms.length
+    });
+  }
+  return layouts;
+}
+
+function loadDesignerLayout(name) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('DesignerLayouts');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) {
+      return { success: true, rooms: JSON.parse(data[i][1] || '[]') };
+    }
+  }
+  return { success: false, message: 'Layout not found.' };
+}
+
+function deleteDesignerLayout(name) {
+  var sheet = getOrCreateSheet_('DesignerLayouts');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+  }
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Full Backup / Restore
+// ---------------------------------------------------------------------------
+
+function createFullBackup(name) {
+  ensureSheets_();
+  var payload = {
+    students: getStudents(),
+    teachers: getTeachers(),
+    rooms: getRooms(),
+    assignments: getAssignments(),
+    stagingGroups: getStagingGroups(),
+    fillerCells: getFillerCells()
+  };
+  var sheet = getOrCreateSheet_('Backups');
+  var data = sheet.getDataRange().getValues();
+  var now = new Date().toISOString();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) {
+      sheet.getRange(i + 1, 2, 1, 2).setValues([[now, JSON.stringify(payload)]]);
+      return { success: true, message: 'Backup "' + name + '" updated.' };
+    }
+  }
+  sheet.appendRow([name, now, JSON.stringify(payload)]);
+  return { success: true, message: 'Backup "' + name + '" saved.' };
+}
+
+function getFullBackups() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Backups');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var backups = [];
+  for (var i = 1; i < data.length; i++) {
+    var payload = JSON.parse(data[i][2] || '{}');
+    backups.push({
+      backupName: String(data[i][0]),
+      createdAt: String(data[i][1]),
+      studentCount: (payload.students || []).length,
+      teacherCount: (payload.teachers || []).length,
+      roomCount: (payload.rooms || []).length
+    });
+  }
+  return backups;
+}
+
+function restoreFullBackup(name) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Backups');
+  var data = sheet.getDataRange().getValues();
+  var payload = null;
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) {
+      payload = JSON.parse(data[i][2] || '{}');
+      break;
+    }
+  }
+  if (!payload) return { success: false, message: 'Backup not found.' };
+
+  // Restore students
+  var sSheet = getOrCreateSheet_('Students');
+  if (sSheet.getLastRow() > 1) sSheet.getRange(2, 1, sSheet.getLastRow() - 1, sSheet.getLastColumn()).clearContent();
+  (payload.students || []).forEach(function (s) {
+    sSheet.appendRow([s.studentId, s.name, s.grade,
+      s.smallGroup ? 'Y' : '', s.readAloud ? 'Y' : '',
+      s.oneToOne ? 'Y' : '', s.proximity ? 'Y' : '',
+      s.prompting ? 'Y' : '', s.otherAccommodations || '']);
+  });
+
+  // Restore teachers
+  var tSheet = getOrCreateSheet_('Teachers');
+  if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+  (payload.teachers || []).forEach(function (t) {
+    tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
+  });
+
+  // Restore rooms
+  var rSheet = getOrCreateSheet_('Rooms');
+  if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+  (payload.rooms || []).forEach(function (r) {
+    rSheet.appendRow([r.roomName, r.roomNumber || '', r.hallway || '',
+      r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
+      r.teacherId || '', r.grade || '', r.floor || '1']);
+  });
+
+  // Restore assignments
+  var aSheet = getOrCreateSheet_('Assignments');
+  if (aSheet.getLastRow() > 1) aSheet.getRange(2, 1, aSheet.getLastRow() - 1, aSheet.getLastColumn()).clearContent();
+  (payload.assignments || []).forEach(function (a) {
+    aSheet.appendRow([a.studentId, a.roomName, a.row, a.column]);
+  });
+
+  // Restore staging
+  var stSheet = getOrCreateSheet_('Staging');
+  if (stSheet.getLastRow() > 1) stSheet.getRange(2, 1, stSheet.getLastRow() - 1, stSheet.getLastColumn()).clearContent();
+  (payload.stagingGroups || []).forEach(function (g) {
+    if (!g.studentIds.length) {
+      stSheet.appendRow([g.groupId, g.groupName, '']);
+    } else {
+      g.studentIds.forEach(function (sid) {
+        stSheet.appendRow([g.groupId, g.groupName, sid]);
+      });
+    }
+  });
+
+  // Restore filler cells
+  var fSheet = getOrCreateSheet_('FillerCells');
+  if (fSheet.getLastRow() > 1) fSheet.getRange(2, 1, fSheet.getLastRow() - 1, fSheet.getLastColumn()).clearContent();
+  (payload.fillerCells || []).forEach(function (f) {
+    fSheet.appendRow([f.roomName, f.row, f.column]);
+  });
+
+  return { success: true, message: 'Backup "' + name + '" restored — ' +
+    (payload.students || []).length + ' students, ' +
+    (payload.teachers || []).length + ' teachers, ' +
+    (payload.rooms || []).length + ' rooms.' };
+}
+
+function deleteFullBackup(name) {
+  var sheet = getOrCreateSheet_('Backups');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+  }
+  return { success: true };
 }
 
 function buildAccommodationCodes_(student) {
