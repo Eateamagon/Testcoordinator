@@ -195,6 +195,11 @@ legend { font-weight: 600; font-size: .85rem; padding: 0 .3rem; color: var(--clr
   box-shadow: 0 1px 3px rgba(212,160,23,.3);
 }
 .btn--gold:hover { opacity: .9; }
+.btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* ---------- Filler Toggle ---------- */
 .filler-toggle {
@@ -697,7 +702,7 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
   background-image:
     linear-gradient(to right, #f0f0f0 1px, transparent 1px),
     linear-gradient(to bottom, #f0f0f0 1px, transparent 1px);
-  min-width: 1200px; min-height: 1200px;
+  min-width: 2400px; min-height: 2400px;
   cursor: crosshair;
   user-select: none;
 }
