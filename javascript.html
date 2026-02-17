@@ -982,8 +982,6 @@ function onCanvasMouseUp(e) {
       var type = APP.designerTool;
       var info = ROOM_TYPES[type];
       var count = APP.designerRooms.filter(function (r) { return r.type === type; }).length + 1;
-      var seatRows = Math.max(1, Math.round(h * 0.8));
-      var seatCols = Math.max(1, Math.round(w * 0.8));
       var newRoom = {
         id: 'dr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
         name: info.label + ' ' + count,
@@ -991,8 +989,7 @@ function onCanvasMouseUp(e) {
         floor: APP.designerFloor,
         hallway: '', roomNumber: '',
         gridX: left, gridY: top, gridW: w, gridH: h,
-        rows: seatRows, columns: seatCols,
-        capacity: seatRows * seatCols
+        capacity: Math.max(1, w * h)
       };
       APP.designerRooms.push(newRoom);
       selectDesignerRoom(newRoom.id);
@@ -1048,7 +1045,7 @@ function renderDesignerCanvas() {
     el.innerHTML =
       '<span class="designer-room-label">' + esc(room.name) + '</span>' +
       '<span class="designer-room-type">' + esc(typeInfo.label) + '</span>' +
-      '<span class="designer-room-size">' + room.rows + '&times;' + room.columns + ' seats</span>';
+      '<span class="designer-room-size">Cap: ' + room.capacity + '</span>';
 
     if (room.id === APP.designerSelectedId) {
       var handle = document.createElement('div');
@@ -1090,9 +1087,7 @@ function renderDesignerProps() {
       '<option value="1"' + (room.floor === '1' ? ' selected' : '') + '>1st Floor</option>' +
       '<option value="2"' + (room.floor === '2' ? ' selected' : '') + '>2nd Floor</option>' +
     '</select></label>' +
-    '<label>Seat Rows<input type="number" id="dp-rows" min="1" max="20" value="' + room.rows + '"></label>' +
-    '<label>Seat Columns<input type="number" id="dp-cols" min="1" max="20" value="' + room.columns + '"></label>' +
-    '<label>Capacity<input type="number" id="dp-cap" min="0" value="' + room.capacity + '"></label>' +
+    '<label>Seating Capacity<input type="number" id="dp-cap" min="0" value="' + room.capacity + '"></label>' +
     '<div style="font-size:.75rem;color:var(--clr-muted)">Position: (' + room.gridX + ', ' + room.gridY + ') — Size: ' + room.gridW + '&times;' + room.gridH + ' cells</div>' +
     '<div class="props-actions">' +
     '<button class="btn btn--primary btn--sm" id="dp-save">Apply</button>' +
@@ -1105,9 +1100,7 @@ function renderDesignerProps() {
     room.roomNumber = document.getElementById('dp-number').value.trim();
     room.hallway = document.getElementById('dp-hallway').value.trim();
     room.floor = document.getElementById('dp-floor').value;
-    room.rows = parseInt(document.getElementById('dp-rows').value, 10) || room.rows;
-    room.columns = parseInt(document.getElementById('dp-cols').value, 10) || room.columns;
-    room.capacity = parseInt(document.getElementById('dp-cap').value, 10) || (room.rows * room.columns);
+    room.capacity = parseInt(document.getElementById('dp-cap').value, 10) || room.capacity;
     // If floor changed, switch canvas to that floor
     if (room.floor !== APP.designerFloor) {
       APP.designerFloor = room.floor;
@@ -1132,34 +1125,34 @@ function renderDesignerProps() {
 function loadExampleSchool() {
   APP.designerRooms = [
     // === Floor 1 ===
-    { id: 'ex01', name: 'Main Office', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'OFF', gridX: 1, gridY: 1, gridW: 6, gridH: 3, rows: 3, columns: 4, capacity: 12 },
-    { id: 'ex02', name: 'Principal', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'P01', gridX: 7, gridY: 1, gridW: 3, gridH: 3, rows: 2, columns: 2, capacity: 4 },
-    { id: 'ex03', name: 'Counselor', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'C01', gridX: 10, gridY: 1, gridW: 3, gridH: 3, rows: 2, columns: 2, capacity: 4 },
-    { id: 'ex04', name: 'Main Hallway', type: 'hallway', floor: '1', hallway: 'Main Hall', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex05', name: 'Room 101', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '101', gridX: 1, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex06', name: 'Room 102', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '102', gridX: 7, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex07', name: 'Room 103', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '103', gridX: 13, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex08', name: 'Library', type: 'library', floor: '1', hallway: 'Main Hall', roomNumber: 'LIB', gridX: 14, gridY: 1, gridW: 8, gridH: 3, rows: 6, columns: 8, capacity: 48 },
-    { id: 'ex09', name: 'Cafeteria', type: 'cafeteria', floor: '1', hallway: 'Main Hall', roomNumber: 'CAF', gridX: 23, gridY: 1, gridW: 8, gridH: 3, rows: 8, columns: 10, capacity: 80 },
-    { id: 'ex10', name: 'Gymnasium', type: 'gym', floor: '1', hallway: 'Athletics Wing', roomNumber: 'GYM', gridX: 32, gridY: 1, gridW: 7, gridH: 5, rows: 8, columns: 10, capacity: 80 },
-    { id: 'ex11', name: 'Boys RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'BR1', gridX: 20, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex12', name: 'Girls RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'GR1', gridX: 23, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex13', name: 'Storage', type: 'storage', floor: '1', hallway: 'Main Hall', roomNumber: 'ST1', gridX: 27, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex14', name: 'Computer Lab', type: 'lab', floor: '1', hallway: 'Main Hall', roomNumber: '110', gridX: 31, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex01', name: 'Main Office', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'OFF', gridX: 1, gridY: 1, gridW: 6, gridH: 3, capacity: 12 },
+    { id: 'ex02', name: 'Principal', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'P01', gridX: 7, gridY: 1, gridW: 3, gridH: 3, capacity: 4 },
+    { id: 'ex03', name: 'Counselor', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'C01', gridX: 10, gridY: 1, gridW: 3, gridH: 3, capacity: 4 },
+    { id: 'ex04', name: 'Main Hallway', type: 'hallway', floor: '1', hallway: 'Main Hall', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, capacity: 0 },
+    { id: 'ex05', name: 'Room 101', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '101', gridX: 1, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
+    { id: 'ex06', name: 'Room 102', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '102', gridX: 7, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
+    { id: 'ex07', name: 'Room 103', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '103', gridX: 13, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
+    { id: 'ex08', name: 'Library', type: 'library', floor: '1', hallway: 'Main Hall', roomNumber: 'LIB', gridX: 14, gridY: 1, gridW: 8, gridH: 3, capacity: 48 },
+    { id: 'ex09', name: 'Cafeteria', type: 'cafeteria', floor: '1', hallway: 'Main Hall', roomNumber: 'CAF', gridX: 23, gridY: 1, gridW: 8, gridH: 3, capacity: 80 },
+    { id: 'ex10', name: 'Gymnasium', type: 'gym', floor: '1', hallway: 'Athletics Wing', roomNumber: 'GYM', gridX: 32, gridY: 1, gridW: 7, gridH: 5, capacity: 80 },
+    { id: 'ex11', name: 'Boys RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'BR1', gridX: 20, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
+    { id: 'ex12', name: 'Girls RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'GR1', gridX: 23, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
+    { id: 'ex13', name: 'Storage', type: 'storage', floor: '1', hallway: 'Main Hall', roomNumber: 'ST1', gridX: 27, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
+    { id: 'ex14', name: 'Computer Lab', type: 'lab', floor: '1', hallway: 'Main Hall', roomNumber: '110', gridX: 31, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
 
     // === Floor 2 ===
-    { id: 'ex20', name: '2nd Floor Hall', type: 'hallway', floor: '2', hallway: '', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex21', name: 'Room 201', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '201', gridX: 1, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex22', name: 'Room 202', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '202', gridX: 7, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex23', name: 'Room 203', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '203', gridX: 13, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex24', name: 'Room 301', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '301', gridX: 1, gridY: 6, gridW: 6, gridH: 5, rows: 6, columns: 6, capacity: 36 },
-    { id: 'ex25', name: 'Room 302', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '302', gridX: 7, gridY: 6, gridW: 6, gridH: 5, rows: 6, columns: 6, capacity: 36 },
-    { id: 'ex26', name: 'Science Lab', type: 'lab', floor: '2', hallway: '8th Grade Hall', roomNumber: '310', gridX: 13, gridY: 6, gridW: 7, gridH: 5, rows: 5, columns: 6, capacity: 30 },
-    { id: 'ex27', name: 'Art Room', type: 'classroom', floor: '2', hallway: 'Electives Wing', roomNumber: '220', gridX: 20, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 5, capacity: 25 },
-    { id: 'ex28', name: 'Music Room', type: 'auditorium', floor: '2', hallway: 'Electives Wing', roomNumber: '221', gridX: 26, gridY: 1, gridW: 6, gridH: 3, rows: 6, columns: 6, capacity: 36 },
-    { id: 'ex29', name: 'Boys RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'BR2', gridX: 21, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex30', name: 'Girls RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'GR2', gridX: 24, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
-    { id: 'ex31', name: 'Teachers Lounge', type: 'office', floor: '2', hallway: '', roomNumber: 'TL', gridX: 33, gridY: 1, gridW: 5, gridH: 3, rows: 3, columns: 4, capacity: 12 }
+    { id: 'ex20', name: '2nd Floor Hall', type: 'hallway', floor: '2', hallway: '', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, capacity: 0 },
+    { id: 'ex21', name: 'Room 201', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '201', gridX: 1, gridY: 1, gridW: 6, gridH: 3, capacity: 30 },
+    { id: 'ex22', name: 'Room 202', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '202', gridX: 7, gridY: 1, gridW: 6, gridH: 3, capacity: 30 },
+    { id: 'ex23', name: 'Room 203', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '203', gridX: 13, gridY: 1, gridW: 6, gridH: 3, capacity: 30 },
+    { id: 'ex24', name: 'Room 301', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '301', gridX: 1, gridY: 6, gridW: 6, gridH: 5, capacity: 36 },
+    { id: 'ex25', name: 'Room 302', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '302', gridX: 7, gridY: 6, gridW: 6, gridH: 5, capacity: 36 },
+    { id: 'ex26', name: 'Science Lab', type: 'lab', floor: '2', hallway: '8th Grade Hall', roomNumber: '310', gridX: 13, gridY: 6, gridW: 7, gridH: 5, capacity: 30 },
+    { id: 'ex27', name: 'Art Room', type: 'classroom', floor: '2', hallway: 'Electives Wing', roomNumber: '220', gridX: 20, gridY: 1, gridW: 6, gridH: 3, capacity: 25 },
+    { id: 'ex28', name: 'Music Room', type: 'auditorium', floor: '2', hallway: 'Electives Wing', roomNumber: '221', gridX: 26, gridY: 1, gridW: 6, gridH: 3, capacity: 36 },
+    { id: 'ex29', name: 'Boys RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'BR2', gridX: 21, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
+    { id: 'ex30', name: 'Girls RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'GR2', gridX: 24, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
+    { id: 'ex31', name: 'Teachers Lounge', type: 'office', floor: '2', hallway: '', roomNumber: 'TL', gridX: 33, gridY: 1, gridW: 5, gridH: 3, capacity: 12 }
   ];
   APP.designerSelectedId = null;
   APP.designerFloor = '1';
@@ -1167,6 +1160,13 @@ function loadExampleSchool() {
   renderDesignerCanvas();
   renderDesignerProps();
   toast('Example school layout loaded — switch floors to see both');
+}
+
+function capacityToGrid(cap) {
+  if (cap <= 0) return { rows: 1, columns: 1 };
+  var cols = Math.ceil(Math.sqrt(cap));
+  var rows = Math.ceil(cap / cols);
+  return { rows: rows, columns: cols };
 }
 
 function importDesignerToRooms() {
@@ -1182,9 +1182,10 @@ function importDesignerToRooms() {
   importable.forEach(function (dr) {
     // Check if room already exists
     if (APP.rooms.some(function (r) { return r.roomName === dr.name; })) { pending--; if (pending <= 0) finishImport(added); return; }
+    var grid = capacityToGrid(dr.capacity);
     var data = {
       roomName: dr.name, roomNumber: dr.roomNumber, hallway: dr.hallway,
-      rows: String(dr.rows), columns: String(dr.columns),
+      rows: String(grid.rows), columns: String(grid.columns),
       maxCapacity: String(dr.capacity), teacherId: '', grade: '', floor: dr.floor
     };
     google.script.run.withSuccessHandler(function () {
