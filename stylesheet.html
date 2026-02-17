@@ -698,13 +698,27 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
 .designer-canvas {
   position: relative;
   background-color: #fff;
-  background-size: 30px 30px;
   background-image:
     linear-gradient(to right, #f0f0f0 1px, transparent 1px),
     linear-gradient(to bottom, #f0f0f0 1px, transparent 1px);
-  min-width: 2400px; min-height: 2400px;
   cursor: crosshair;
   user-select: none;
+  /* Width, height, and background-size are set dynamically by JS based on zoom */
+}
+
+/* --- Zoom Controls --- */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  margin-left: auto;
+}
+.zoom-label {
+  min-width: 3rem;
+  text-align: center;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--clr-primary);
 }
 
 /* --- Drawing Preview --- */
