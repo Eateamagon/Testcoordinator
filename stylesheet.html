@@ -39,22 +39,50 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  flex-wrap: wrap;
 }
 .top-bar__title { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
-.top-bar__nav { display: flex; gap: .35rem; margin-left: auto; }
+.top-bar__nav { display: flex; gap: .3rem; margin-left: auto; flex-wrap: wrap; }
 
 .nav-btn {
   background: transparent;
   border: 1px solid rgba(255,255,255,.4);
   color: #fff;
-  padding: .35rem .85rem;
+  padding: .3rem .7rem;
   border-radius: var(--radius);
   cursor: pointer;
-  font-size: .85rem;
+  font-size: .8rem;
   transition: background .15s;
 }
 .nav-btn:hover { background: rgba(255,255,255,.15); }
 .nav-btn.active { background: #fff; color: var(--clr-primary); font-weight: 600; }
+
+/* ---------- Grade Switcher ---------- */
+.grade-switcher {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .5rem 1.25rem;
+  background: #eef2ff;
+  border-bottom: 2px solid #c7d2fe;
+  position: sticky;
+  top: 44px;
+  z-index: 99;
+}
+.grade-switcher__label { font-weight: 600; font-size: .85rem; color: #4338ca; }
+.grade-btn {
+  padding: .25rem .7rem;
+  border: 1px solid #a5b4fc;
+  border-radius: 20px;
+  background: #fff;
+  color: #4338ca;
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.grade-btn:hover { background: #e0e7ff; }
+.grade-btn.active { background: #4338ca; color: #fff; border-color: #4338ca; }
 
 /* ---------- Cards ---------- */
 .card {
@@ -129,6 +157,18 @@ th, td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid #e5e7
 th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
 .actions { white-space: nowrap; }
 
+/* ---------- Count Badge ---------- */
+.count-badge {
+  display: inline-block;
+  background: #e5e7eb;
+  color: var(--clr-text);
+  padding: .05rem .45rem;
+  border-radius: 10px;
+  font-size: .75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 /* ---------- Badges ---------- */
 .badge {
   display: inline-block;
@@ -145,6 +185,7 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
 .badge--prox { background: #d97706; }
 .badge--pmpt { background: #0891b2; }
 .badge--other { background: #6b7280; }
+.badge--grade { background: #4338ca; }
 
 /* ---------- Room Cards ---------- */
 .room-cards { display: flex; flex-wrap: wrap; gap: .75rem; }
@@ -152,10 +193,24 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   background: var(--clr-primary-light);
   border-radius: var(--radius);
   padding: .85rem 1rem;
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 280px;
 }
 .room-card h3 { font-size: .95rem; margin-bottom: .25rem; }
-.room-card p { font-size: .82rem; color: var(--clr-muted); margin-bottom: .5rem; }
+.room-card p { font-size: .82rem; color: var(--clr-muted); margin-bottom: .3rem; }
+.room-num { font-weight: 400; font-size: .8rem; color: var(--clr-muted); }
+.room-teacher { color: var(--clr-primary); font-weight: 600; }
+
+/* ---------- Hallway Section ---------- */
+.hallway-section { margin-bottom: 1.25rem; }
+.hallway-header {
+  font-size: .9rem;
+  padding: .3rem .6rem;
+  background: #f3f4f6;
+  border-left: 3px solid var(--clr-primary);
+  margin-bottom: .5rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
 
 /* ---------- Assignment Split Layout ---------- */
 .assign-layout {
@@ -163,14 +218,87 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   grid-template-columns: 280px 1fr;
   gap: 1rem;
   padding: 1rem;
-  min-height: calc(100vh - 60px);
+  min-height: calc(100vh - 100px);
 }
 @media (max-width: 800px) {
   .assign-layout { grid-template-columns: 1fr; }
 }
 
 .panel { overflow: auto; }
-.panel--students { max-height: calc(100vh - 80px); }
+.panel--students { max-height: calc(100vh - 120px); }
+
+/* ---------- Staging Layout ---------- */
+.staging-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: calc(100vh - 100px);
+}
+@media (max-width: 800px) {
+  .staging-layout { grid-template-columns: 1fr; }
+}
+
+/* ---------- Staging Toolbar ---------- */
+.staging-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: .75rem;
+}
+.staging-toolbar h2 { margin-bottom: 0; }
+.staging-toolbar input[type="text"] {
+  padding: .35rem .55rem;
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius);
+  font-size: .85rem;
+  min-width: 180px;
+}
+
+/* ---------- Staging Groups ---------- */
+.staging-group {
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius);
+  margin-bottom: .75rem;
+  overflow: hidden;
+}
+.staging-group__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .6rem .85rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.staging-group__header h3 { font-size: .9rem; }
+.staging-group__actions { display: flex; gap: .35rem; align-items: center; }
+.staging-group__actions select {
+  padding: .25rem .4rem;
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius);
+  font-size: .8rem;
+}
+
+.staging-group__members {
+  min-height: 50px;
+  padding: .5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  transition: background .15s;
+}
+.staging-group__members.drag-over { background: #d1fae5; }
+
+.student-chip--staged {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  flex-wrap: wrap;
+}
 
 /* ---------- Student List (drag source) ---------- */
 .student-list { list-style: none; display: flex; flex-direction: column; gap: .35rem; }
@@ -182,10 +310,14 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   cursor: grab;
   font-size: .82rem;
   transition: box-shadow .15s;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .3rem;
 }
 .student-chip:hover { box-shadow: 0 2px 6px rgba(0,0,0,.12); }
 .student-chip.dragging { opacity: .4; }
-.chip-meta { color: var(--clr-muted); margin-left: .3rem; }
+.chip-meta { color: var(--clr-muted); }
 
 /* ---------- Grid Toolbar ---------- */
 .grid-toolbar {
@@ -193,7 +325,7 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   flex-wrap: wrap;
   gap: .75rem;
   align-items: center;
-  margin-bottom: .75rem;
+  margin-bottom: .5rem;
 }
 .grid-toolbar label { font-size: .85rem; font-weight: 500; display: flex; align-items: center; gap: .3rem; }
 .grid-toolbar select,
@@ -202,6 +334,23 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   border: 1px solid #d1d5db;
   border-radius: var(--radius);
   font-size: .85rem;
+}
+
+/* ---------- Room Info Bar ---------- */
+.room-info-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  margin-bottom: .5rem;
+}
+.info-chip {
+  display: inline-block;
+  background: #eef2ff;
+  color: #4338ca;
+  padding: .15rem .5rem;
+  border-radius: 10px;
+  font-size: .75rem;
+  font-weight: 600;
 }
 
 /* ---------- Proctor Label ---------- */
@@ -246,6 +395,11 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
 }
 .cell-name { font-weight: 600; font-size: .82rem; }
 .cell-codes { margin-top: 2px; }
+.cell-iep-btn {
+  margin-top: 3px;
+  padding: .1rem .35rem !important;
+  font-size: .68rem !important;
+}
 
 .grid-cell.drag-over {
   background: #d1fae5;
@@ -276,6 +430,41 @@ th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; }
   font-size: .82rem;
   margin-bottom: .35rem;
   border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+/* ---------- Template Cards ---------- */
+.template-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  padding: .65rem .85rem;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius);
+  margin-bottom: .5rem;
+}
+.template-card h3 { font-size: .9rem; margin: 0; }
+.template-card p { margin: 0; }
+
+/* ---------- Modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+.modal {
+  width: 90%;
+  max-width: 480px;
+  margin: 0;
+}
+.modal-subtitle {
+  color: var(--clr-muted);
+  font-size: .85rem;
+  margin-bottom: .75rem;
 }
 
 /* ---------- Toast ---------- */

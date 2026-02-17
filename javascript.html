@@ -4,31 +4,45 @@
 // =========================================================================
 var APP = {
   students: [],
+  teachers: [],
   rooms: [],
-  assignments: [],    // { studentId, roomName, row, column }
+  assignments: [],
+  stagingGroups: [],
+  templates: [],
   editingStudentId: null,
-  selectedRoom: null
+  editingTeacherId: null,
+  selectedRoom: null,
+  gradeFilter: ''       // global grade filter: '' | '6' | '7' | '8'
 };
 
 // =========================================================================
 // Bootstrap
 // =========================================================================
 document.addEventListener('DOMContentLoaded', function () {
+  initGradeSwitcher();
   initNav();
   initStudentForm();
+  initTeacherForm();
   initRoomForm();
+  initStagingView();
   initAssignView();
+  initTemplateView();
+  initAccomModal();
   refreshAll();
 });
 
 function refreshAll() {
   showLoading(true);
-  var pending = 3;
+  var pending = 6;
   function done() { pending--; if (pending <= 0) { renderAll(); showLoading(false); } }
 
   google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); })
     .withFailureHandler(function (e) { toast('Error loading students: ' + e.message); done(); })
     .getStudents();
+
+  google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); })
+    .withFailureHandler(function (e) { toast('Error loading teachers: ' + e.message); done(); })
+    .getTeachers();
 
   google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); })
     .withFailureHandler(function (e) { toast('Error loading rooms: ' + e.message); done(); })
@@ -37,12 +51,53 @@ function refreshAll() {
   google.script.run.withSuccessHandler(function (d) { APP.assignments = d || []; done(); })
     .withFailureHandler(function (e) { toast('Error loading assignments: ' + e.message); done(); })
     .getAssignments();
+
+  google.script.run.withSuccessHandler(function (d) { APP.stagingGroups = d || []; done(); })
+    .withFailureHandler(function (e) { toast('Error loading staging: ' + e.message); done(); })
+    .getStagingGroups();
+
+  google.script.run.withSuccessHandler(function (d) { APP.templates = d || []; done(); })
+    .withFailureHandler(function (e) { toast('Error loading templates: ' + e.message); done(); })
+    .getTemplates();
 }
 
 function renderAll() {
   renderStudentTable();
+  renderTeacherTable();
   renderRoomList();
+  populateTeacherDropdown();
+  renderStagingView();
   renderAssignView();
+  renderTemplateList();
+}
+
+// =========================================================================
+// Global Grade Switcher
+// =========================================================================
+function initGradeSwitcher() {
+  document.querySelectorAll('.grade-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.grade-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      APP.gradeFilter = btn.dataset.grade;
+      renderAll();
+    });
+  });
+}
+
+/** Filter array by the global grade setting. Works for students, teachers, rooms. */
+function filterByGrade(arr, gradeKey) {
+  gradeKey = gradeKey || 'grade';
+  if (!APP.gradeFilter) return arr;
+  return arr.filter(function (item) {
+    var g = item[gradeKey];
+    return !g || g === APP.gradeFilter;
+  });
+}
+
+function filterStudentsByGrade(arr) {
+  if (!APP.gradeFilter) return arr;
+  return arr.filter(function (s) { return s.grade === APP.gradeFilter; });
 }
 
 // =========================================================================
@@ -56,8 +111,58 @@ function initNav() {
       document.querySelectorAll('.view').forEach(function (v) { v.classList.add('hidden'); });
       document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
       if (btn.dataset.view === 'assign') renderAssignView();
+      if (btn.dataset.view === 'staging') renderStagingView();
+      if (btn.dataset.view === 'rooms') populateTeacherDropdown();
     });
   });
+}
+
+// =========================================================================
+// Accommodation Quick-Edit Modal
+// =========================================================================
+function initAccomModal() {
+  document.getElementById('am-cancel').addEventListener('click', closeAccomModal);
+  document.getElementById('am-save').addEventListener('click', function () {
+    var sid = document.getElementById('am-student-id').value;
+    var s = APP.students.find(function (x) { return x.studentId === sid; });
+    if (!s) return;
+    var data = {
+      studentId: sid,
+      name: s.name,
+      grade: s.grade,
+      smallGroup: document.getElementById('am-smallgroup').checked,
+      readAloud: document.getElementById('am-readaloud').checked,
+      oneToOne: document.getElementById('am-onetoone').checked,
+      proximity: document.getElementById('am-proximity').checked,
+      prompting: document.getElementById('am-prompting').checked,
+      otherAccommodations: document.getElementById('am-other').value.trim()
+    };
+    showLoading(true);
+    google.script.run.withSuccessHandler(function () {
+      closeAccomModal();
+      refreshAll();
+      toast('Accommodations updated');
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+      .updateStudent(data);
+  });
+}
+
+function openAccomModal(studentId) {
+  var s = APP.students.find(function (x) { return x.studentId === studentId; });
+  if (!s) return;
+  document.getElementById('am-student-id').value = s.studentId;
+  document.getElementById('accom-modal-name').textContent = s.name + ' (' + s.studentId + ')';
+  document.getElementById('am-smallgroup').checked = s.smallGroup;
+  document.getElementById('am-readaloud').checked = s.readAloud;
+  document.getElementById('am-onetoone').checked = s.oneToOne;
+  document.getElementById('am-proximity').checked = s.proximity;
+  document.getElementById('am-prompting').checked = s.prompting;
+  document.getElementById('am-other').value = s.otherAccommodations || '';
+  document.getElementById('accom-modal').classList.remove('hidden');
+}
+
+function closeAccomModal() {
+  document.getElementById('accom-modal').classList.add('hidden');
 }
 
 // =========================================================================
@@ -74,7 +179,6 @@ function initStudentForm() {
         .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
         .updateStudent(data);
     } else {
-      // Check for duplicate ID
       if (APP.students.some(function (s) { return s.studentId === data.studentId; })) {
         toast('Duplicate Student ID'); showLoading(false); return;
       }
@@ -89,7 +193,6 @@ function initStudentForm() {
     resetStudentForm();
   });
 
-  document.getElementById('roster-grade-filter').addEventListener('change', renderStudentTable);
   document.getElementById('roster-acc-filter').addEventListener('change', renderStudentTable);
 }
 
@@ -145,13 +248,12 @@ function confirmDeleteStudent(studentId) {
 // Student Table
 // =========================================================================
 function renderStudentTable() {
-  var gradeF = document.getElementById('roster-grade-filter').value;
   var accF = document.getElementById('roster-acc-filter').value;
-  var list = APP.students.filter(function (s) {
-    if (gradeF && s.grade !== gradeF) return false;
-    if (accF && !s[accF]) return false;
-    return true;
-  });
+  var list = filterStudentsByGrade(APP.students);
+  if (accF) list = list.filter(function (s) { return s[accF]; });
+
+  document.getElementById('roster-count').textContent = list.length + ' student' + (list.length !== 1 ? 's' : '');
+
   var tbody = document.querySelector('#student-table tbody');
   tbody.innerHTML = '';
   list.forEach(function (s) {
@@ -164,7 +266,96 @@ function renderStudentTable() {
       '<td>' + codes + '</td>' +
       '<td class="actions">' +
         '<button class="btn btn--sm btn--secondary" onclick="editStudent(\'' + esc(s.studentId) + '\')">Edit</button> ' +
+        '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
         '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button>' +
+      '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+// =========================================================================
+// Teacher Form & Table
+// =========================================================================
+function initTeacherForm() {
+  document.getElementById('teacher-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var data = {
+      teacherId: document.getElementById('tf-id').value.trim(),
+      name: document.getElementById('tf-name').value.trim(),
+      roomNumber: document.getElementById('tf-room').value.trim(),
+      hallway: document.getElementById('tf-hallway').value.trim(),
+      grade: document.getElementById('tf-grade').value
+    };
+    if (!data.name || !data.teacherId) { toast('Teacher name and ID required'); return; }
+    showLoading(true);
+
+    if (APP.editingTeacherId) {
+      google.script.run.withSuccessHandler(function () { APP.editingTeacherId = null; resetTeacherForm(); refreshAll(); toast('Teacher updated'); })
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+        .updateTeacher(data);
+    } else {
+      if (APP.teachers.some(function (t) { return t.teacherId === data.teacherId; })) {
+        toast('Duplicate Teacher ID'); showLoading(false); return;
+      }
+      google.script.run.withSuccessHandler(function () { resetTeacherForm(); refreshAll(); toast('Teacher added'); })
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+        .addTeacher(data);
+    }
+  });
+
+  document.getElementById('tf-cancel-btn').addEventListener('click', function () {
+    APP.editingTeacherId = null;
+    resetTeacherForm();
+  });
+}
+
+function resetTeacherForm() {
+  document.getElementById('teacher-form').reset();
+  document.getElementById('tf-id').disabled = false;
+  document.getElementById('tf-submit-btn').textContent = 'Add Teacher';
+  document.getElementById('tf-cancel-btn').style.display = 'none';
+}
+
+function editTeacher(teacherId) {
+  var t = APP.teachers.find(function (x) { return x.teacherId === teacherId; });
+  if (!t) return;
+  APP.editingTeacherId = teacherId;
+  document.getElementById('tf-id').value = t.teacherId;
+  document.getElementById('tf-id').disabled = true;
+  document.getElementById('tf-name').value = t.name;
+  document.getElementById('tf-room').value = t.roomNumber;
+  document.getElementById('tf-hallway').value = t.hallway;
+  document.getElementById('tf-grade').value = t.grade;
+  document.getElementById('tf-submit-btn').textContent = 'Save Changes';
+  document.getElementById('tf-cancel-btn').style.display = '';
+  document.getElementById('tf-name').focus();
+}
+
+function confirmDeleteTeacher(teacherId) {
+  if (!confirm('Delete teacher ' + teacherId + '?')) return;
+  showLoading(true);
+  google.script.run.withSuccessHandler(function () { refreshAll(); toast('Teacher deleted'); })
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+    .deleteTeacher(teacherId);
+}
+
+function renderTeacherTable() {
+  var list = filterByGrade(APP.teachers);
+  document.getElementById('teacher-count').textContent = list.length + ' teacher' + (list.length !== 1 ? 's' : '');
+
+  var tbody = document.querySelector('#teacher-table tbody');
+  tbody.innerHTML = '';
+  list.forEach(function (t) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + esc(t.teacherId) + '</td>' +
+      '<td>' + esc(t.name) + '</td>' +
+      '<td>' + esc(t.roomNumber) + '</td>' +
+      '<td>' + esc(t.hallway) + '</td>' +
+      '<td>' + (t.grade || 'Elective') + '</td>' +
+      '<td class="actions">' +
+        '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
+        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button>' +
       '</td>';
     tbody.appendChild(tr);
   });
@@ -173,16 +364,33 @@ function renderStudentTable() {
 // =========================================================================
 // Room Form & List
 // =========================================================================
+function populateTeacherDropdown() {
+  var sel = document.getElementById('rf-teacher');
+  var prev = sel.value;
+  sel.innerHTML = '<option value="">-- None --</option>';
+  APP.teachers.forEach(function (t) {
+    var opt = document.createElement('option');
+    opt.value = t.teacherId;
+    opt.textContent = t.name + (t.roomNumber ? ' (Rm ' + t.roomNumber + ')' : '');
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+}
+
 function initRoomForm() {
   document.getElementById('room-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var data = {
       roomName: document.getElementById('rf-name').value.trim(),
+      roomNumber: document.getElementById('rf-number').value.trim(),
+      hallway: document.getElementById('rf-hallway').value.trim(),
       rows: document.getElementById('rf-rows').value,
       columns: document.getElementById('rf-cols').value,
-      maxCapacity: document.getElementById('rf-cap').value
+      maxCapacity: document.getElementById('rf-cap').value,
+      teacherId: document.getElementById('rf-teacher').value,
+      grade: document.getElementById('rf-grade').value
     };
-    if (!data.roomName) { toast('Room name required'); return; }
+    if (!data.roomName) { toast('Room label required'); return; }
     if (APP.rooms.some(function (r) { return r.roomName === data.roomName; })) { toast('Duplicate room name'); return; }
     showLoading(true);
     google.script.run.withSuccessHandler(function () { document.getElementById('room-form').reset(); refreshAll(); toast('Room added'); })
@@ -194,15 +402,41 @@ function initRoomForm() {
 function renderRoomList() {
   var container = document.getElementById('room-list');
   container.innerHTML = '';
-  if (!APP.rooms.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
-  APP.rooms.forEach(function (r) {
-    var div = document.createElement('div');
-    div.className = 'room-card';
-    div.innerHTML =
-      '<h3>' + esc(r.roomName) + '</h3>' +
-      '<p>' + r.rows + ' rows &times; ' + r.columns + ' cols &mdash; capacity ' + (r.maxCapacity || r.rows * r.columns) + '</p>' +
-      '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
-    container.appendChild(div);
+  var list = filterByGrade(APP.rooms);
+  document.getElementById('room-count').textContent = list.length + ' room' + (list.length !== 1 ? 's' : '');
+
+  if (!list.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
+
+  // Group by hallway
+  var hallways = {};
+  list.forEach(function (r) {
+    var hw = r.hallway || 'Other';
+    if (!hallways[hw]) hallways[hw] = [];
+    hallways[hw].push(r);
+  });
+
+  Object.keys(hallways).sort().forEach(function (hw) {
+    var section = document.createElement('div');
+    section.className = 'hallway-section';
+    section.innerHTML = '<h3 class="hallway-header">' + esc(hw) + '</h3>';
+    var grid = document.createElement('div');
+    grid.className = 'room-cards';
+
+    hallways[hw].forEach(function (r) {
+      var teacher = APP.teachers.find(function (t) { return t.teacherId === r.teacherId; });
+      var div = document.createElement('div');
+      div.className = 'room-card';
+      var cap = r.maxCapacity || (r.rows * r.columns);
+      div.innerHTML =
+        '<h3>' + esc(r.roomName) + (r.roomNumber ? ' <span class="room-num">Rm ' + esc(r.roomNumber) + '</span>' : '') + '</h3>' +
+        '<p>' + r.rows + ' rows &times; ' + r.columns + ' cols &mdash; cap ' + cap + '</p>' +
+        (teacher ? '<p class="room-teacher">' + esc(teacher.name) + '</p>' : '') +
+        (r.grade ? '<span class="badge badge--grade">Grade ' + esc(r.grade) + '</span> ' : '') +
+        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
+      grid.appendChild(div);
+    });
+    section.appendChild(grid);
+    container.appendChild(section);
   });
 }
 
@@ -215,6 +449,178 @@ function confirmDeleteRoom(name) {
 }
 
 // =========================================================================
+// Staging Ground
+// =========================================================================
+function initStagingView() {
+  document.getElementById('btn-create-group').addEventListener('click', function () {
+    var name = document.getElementById('new-group-name').value.trim();
+    if (!name) { toast('Enter a group name'); return; }
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) {
+      document.getElementById('new-group-name').value = '';
+      refreshAll();
+      toast('Group created');
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+      .createStagingGroup(name);
+  });
+
+  document.getElementById('staging-acc-filter').addEventListener('change', renderStagingView);
+}
+
+function renderStagingView() {
+  renderStagingStudentList();
+  renderStagingGroups();
+}
+
+function renderStagingStudentList() {
+  var accF = document.getElementById('staging-acc-filter').value;
+  // Show students not yet in any staging group
+  var stagedIds = {};
+  APP.stagingGroups.forEach(function (g) {
+    g.studentIds.forEach(function (sid) { stagedIds[sid] = true; });
+  });
+
+  var list = filterStudentsByGrade(APP.students).filter(function (s) {
+    if (stagedIds[s.studentId]) return false;
+    if (accF && !s[accF]) return false;
+    return true;
+  });
+
+  var ul = document.getElementById('staging-student-list');
+  ul.innerHTML = '';
+  if (!list.length) { ul.innerHTML = '<li class="muted">No available students.</li>'; return; }
+
+  list.forEach(function (s) {
+    var li = document.createElement('li');
+    li.className = 'student-chip';
+    li.setAttribute('draggable', 'true');
+    li.dataset.studentId = s.studentId;
+    li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>';
+
+    li.addEventListener('dragstart', function (e) {
+      e.dataTransfer.setData('text/plain', 'stage:' + s.studentId);
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
+    ul.appendChild(li);
+  });
+}
+
+function renderStagingGroups() {
+  var container = document.getElementById('staging-groups-container');
+  container.innerHTML = '';
+
+  if (!APP.stagingGroups.length) {
+    container.innerHTML = '<p class="muted">No staging groups yet. Create one above.</p>';
+    return;
+  }
+
+  APP.stagingGroups.forEach(function (group) {
+    var div = document.createElement('div');
+    div.className = 'staging-group';
+
+    var memberCount = group.studentIds.filter(function (id) { return id; }).length;
+    var header = document.createElement('div');
+    header.className = 'staging-group__header';
+    header.innerHTML =
+      '<h3>' + esc(group.groupName) + ' <span class="count-badge">' + memberCount + '</span></h3>' +
+      '<div class="staging-group__actions">' +
+        '<select class="staging-room-select" data-group-id="' + esc(group.groupId) + '">' +
+          '<option value="">Place in room...</option>' +
+        '</select>' +
+        '<button class="btn btn--sm btn--accent btn-place-group" data-group-id="' + esc(group.groupId) + '">Place</button> ' +
+        '<button class="btn btn--sm btn--danger btn-delete-group" data-group-id="' + esc(group.groupId) + '">Delete</button>' +
+      '</div>';
+    div.appendChild(header);
+
+    // Room dropdown for this group
+    var roomSel = header.querySelector('.staging-room-select');
+    var filteredRooms = filterByGrade(APP.rooms);
+    filteredRooms.forEach(function (r) {
+      var opt = document.createElement('option');
+      opt.value = r.roomName;
+      opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : '');
+      roomSel.appendChild(opt);
+    });
+
+    // Drop zone for students
+    var dropZone = document.createElement('div');
+    dropZone.className = 'staging-group__members';
+    dropZone.dataset.groupId = group.groupId;
+
+    dropZone.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
+    dropZone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      this.classList.remove('drag-over');
+      var payload = e.dataTransfer.getData('text/plain');
+      if (!payload.startsWith('stage:')) return;
+      var sid = payload.replace('stage:', '');
+      var gid = this.dataset.groupId;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Student added to group'); })
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+        .addStudentToStagingGroup(gid, sid);
+    });
+
+    // Render members
+    if (!memberCount) {
+      dropZone.innerHTML = '<p class="muted">Drag students here</p>';
+    } else {
+      group.studentIds.forEach(function (sid) {
+        if (!sid) return;
+        var s = APP.students.find(function (x) { return x.studentId === sid; });
+        if (!s) return;
+        var chip = document.createElement('div');
+        chip.className = 'student-chip student-chip--staged';
+        chip.innerHTML =
+          '<strong>' + esc(s.name) + '</strong> ' + accomBadges(s) +
+          ' <button class="btn btn--sm btn--danger btn-remove-staged" data-group-id="' + esc(group.groupId) + '" data-student-id="' + esc(sid) + '">&times;</button>' +
+          ' <button class="btn btn--sm btn--secondary btn-edit-accom" data-student-id="' + esc(sid) + '">IEP</button>';
+        dropZone.appendChild(chip);
+      });
+    }
+
+    div.appendChild(dropZone);
+    container.appendChild(div);
+  });
+
+  // Event delegation for staging group buttons
+  container.addEventListener('click', function (e) {
+    var target = e.target;
+    if (target.classList.contains('btn-remove-staged')) {
+      var gid = target.dataset.groupId;
+      var sid = target.dataset.studentId;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Removed from group'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+        .removeStudentFromStagingGroup(gid, sid);
+    }
+    if (target.classList.contains('btn-delete-group')) {
+      var gid2 = target.dataset.groupId;
+      if (!confirm('Delete this staging group?')) return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Group deleted'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+        .deleteStagingGroup(gid2);
+    }
+    if (target.classList.contains('btn-place-group')) {
+      var gid3 = target.dataset.groupId;
+      var roomSel2 = container.querySelector('.staging-room-select[data-group-id="' + gid3 + '"]');
+      var roomName = roomSel2 ? roomSel2.value : '';
+      if (!roomName) { toast('Select a room first'); return; }
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message || 'Group placed'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+        .placeStagingGroupInRoom(gid3, roomName);
+    }
+    if (target.classList.contains('btn-edit-accom')) {
+      openAccomModal(target.dataset.studentId);
+    }
+  });
+}
+
+// =========================================================================
 // Assignment View  (Drag & Drop)
 // =========================================================================
 function initAssignView() {
@@ -222,24 +628,26 @@ function initAssignView() {
     APP.selectedRoom = this.value;
     renderGrid();
   });
-  document.getElementById('assign-grade-filter').addEventListener('change', renderUnassignedList);
   document.getElementById('assign-acc-filter').addEventListener('change', renderUnassignedList);
   document.getElementById('btn-auto-suggest').addEventListener('click', runAutoSuggest);
   document.getElementById('btn-finalize').addEventListener('click', runFinalize);
 }
 
 function renderAssignView() {
-  // Populate room dropdown
+  // Populate room dropdown (filtered by grade)
   var sel = document.getElementById('grid-room-select');
   var prev = sel.value;
   sel.innerHTML = '';
-  APP.rooms.forEach(function (r) {
+  var filteredRooms = filterByGrade(APP.rooms);
+  filteredRooms.forEach(function (r) {
     var opt = document.createElement('option');
     opt.value = r.roomName;
-    opt.textContent = r.roomName;
+    var label = r.roomName;
+    if (r.roomNumber) label += ' (Rm ' + r.roomNumber + ')';
+    opt.textContent = label;
     sel.appendChild(opt);
   });
-  if (prev && APP.rooms.some(function (r) { return r.roomName === prev; })) {
+  if (prev && filteredRooms.some(function (r) { return r.roomName === prev; })) {
     sel.value = prev;
   }
   APP.selectedRoom = sel.value;
@@ -251,14 +659,12 @@ function renderAssignView() {
 // ---------- Unassigned student list ----------
 
 function renderUnassignedList() {
-  var gradeF = document.getElementById('assign-grade-filter').value;
   var accF = document.getElementById('assign-acc-filter').value;
   var assignedIds = {};
   APP.assignments.forEach(function (a) { assignedIds[a.studentId] = true; });
 
-  var list = APP.students.filter(function (s) {
+  var list = filterStudentsByGrade(APP.students).filter(function (s) {
     if (assignedIds[s.studentId]) return false;
-    if (gradeF && s.grade !== gradeF) return false;
     if (accF && !s[accF]) return false;
     return true;
   });
@@ -272,7 +678,9 @@ function renderUnassignedList() {
     li.className = 'student-chip';
     li.setAttribute('draggable', 'true');
     li.dataset.studentId = s.studentId;
-    li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">' + esc(s.grade) + ' ' + accomBadges(s) + '</span>';
+    li.innerHTML =
+      '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>' +
+      ' <button class="btn btn--sm btn--secondary btn-inline-accom" data-student-id="' + esc(s.studentId) + '">IEP</button>';
 
     li.addEventListener('dragstart', function (e) {
       e.dataTransfer.setData('text/plain', s.studentId);
@@ -282,6 +690,14 @@ function renderUnassignedList() {
 
     ul.appendChild(li);
   });
+
+  // Delegation for inline IEP edit buttons
+  ul.addEventListener('click', function (e) {
+    if (e.target.classList.contains('btn-inline-accom')) {
+      e.stopPropagation();
+      openAccomModal(e.target.dataset.studentId);
+    }
+  });
 }
 
 // ---------- Room Grid ----------
@@ -289,14 +705,27 @@ function renderUnassignedList() {
 function renderGrid() {
   var container = document.getElementById('grid-container');
   var warnings = document.getElementById('grid-warnings');
+  var infoBar = document.getElementById('grid-room-info');
   container.innerHTML = '';
   warnings.innerHTML = '';
+  infoBar.innerHTML = '';
 
   var room = APP.rooms.find(function (r) { return r.roomName === APP.selectedRoom; });
   if (!room) { container.innerHTML = '<p class="muted">Select a room.</p>'; return; }
 
-  // Build lookup of assignments for this room
-  var seatMap = {}; // "r,c" -> assignment
+  // Info bar
+  var teacher = APP.teachers.find(function (t) { return t.teacherId === room.teacherId; });
+  var infoParts = [];
+  if (room.roomNumber) infoParts.push('Room ' + room.roomNumber);
+  if (room.hallway) infoParts.push(room.hallway);
+  if (teacher) infoParts.push('Teacher: ' + teacher.name);
+  if (room.grade) infoParts.push('Grade ' + room.grade);
+  var cap = room.maxCapacity || (room.rows * room.columns);
+  infoParts.push('Capacity: ' + cap);
+  infoBar.innerHTML = infoParts.map(function (p) { return '<span class="info-chip">' + esc(p) + '</span>'; }).join(' ');
+
+  // Build seat map
+  var seatMap = {};
   var roomAssignments = APP.assignments.filter(function (a) { return a.roomName === room.roomName; });
   roomAssignments.forEach(function (a) { seatMap[a.row + ',' + a.column] = a; });
 
@@ -315,14 +744,15 @@ function renderGrid() {
         var student = APP.students.find(function (s) { return s.studentId === a.studentId; });
         if (student) {
           cell.classList.add('occupied');
-          cell.innerHTML = '<span class="cell-name">' + esc(student.name) + '</span><span class="cell-codes">' + accomBadges(student) + '</span>';
+          cell.innerHTML =
+            '<span class="cell-name">' + esc(student.name) + '</span>' +
+            '<span class="cell-codes">' + accomBadges(student) + '</span>' +
+            '<button class="btn btn--sm btn--secondary cell-iep-btn" data-student-id="' + esc(student.studentId) + '">IEP</button>';
 
-          // Proximity warning: student has proximity flag but placed beyond row 2
           if (student.proximity && r > 2) {
             cell.classList.add('warn-proximity');
           }
 
-          // Make occupied cells draggable (to move between seats)
           cell.setAttribute('draggable', 'true');
           (function (sid) {
             cell.addEventListener('dragstart', function (e) {
@@ -360,18 +790,16 @@ function renderGrid() {
           e.preventDefault();
           this.classList.remove('drag-over');
           var studentId = e.dataTransfer.getData('text/plain');
-          if (!studentId) return;
+          if (!studentId || studentId.startsWith('stage:')) return;
 
-          // Check if seat is already taken by a different student
           var existing = seatMap[row + ',' + col];
           if (existing && existing.studentId !== studentId) {
-            toast('Seat already occupied — unassign first (double-click).');
+            toast('Seat occupied — double-click to unassign first.');
             return;
           }
 
           showLoading(true);
           google.script.run.withSuccessHandler(function () {
-            // Update local state
             APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== studentId; });
             APP.assignments.push({ studentId: studentId, roomName: APP.selectedRoom, row: row, column: col });
             renderAssignView();
@@ -386,6 +814,14 @@ function renderGrid() {
     }
   }
 
+  // IEP button delegation on grid
+  container.addEventListener('click', function (e) {
+    if (e.target.classList.contains('cell-iep-btn')) {
+      e.stopPropagation();
+      openAccomModal(e.target.dataset.studentId);
+    }
+  });
+
   // Warnings
   var warnMsgs = [];
   var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
@@ -399,7 +835,6 @@ function renderGrid() {
     }
   }
 
-  // Check 1:1 violations
   var oneToOneStudents = roomAssignments.filter(function (a) {
     var s = APP.students.find(function (x) { return x.studentId === a.studentId; });
     return s && s.oneToOne;
@@ -417,19 +852,19 @@ function runAutoSuggest() {
   if (!APP.rooms.length) { toast('Create rooms first'); return; }
   if (!APP.students.length) { toast('Add students first'); return; }
   var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
+  var gradeF = APP.gradeFilter || null;
   showLoading(true);
   google.script.run.withSuccessHandler(function (result) {
     if (result.error) { toast(result.error); showLoading(false); return; }
-    // Apply server-side
     google.script.run.withSuccessHandler(function () {
       APP.assignments = result;
       renderAssignView();
       showLoading(false);
-      toast('Auto-suggest complete — ' + result.length + ' placements. You can manually adjust.');
+      toast('Auto-suggest complete — ' + result.length + ' placements.' + (gradeF ? ' (Grade ' + gradeF + ')' : ''));
     }).withFailureHandler(function (e) { toast('Error saving: ' + e.message); showLoading(false); })
       .applyRecommendations(result);
   }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .generateRecommendations(sgLimit);
+    .generateRecommendations(sgLimit, gradeF);
 }
 
 // ---------- Finalize ----------
@@ -443,6 +878,64 @@ function runFinalize() {
     toast(res.message || 'Layout finalized');
   }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
     .finalizeLayout();
+}
+
+// =========================================================================
+// Templates
+// =========================================================================
+function initTemplateView() {
+  document.getElementById('btn-save-template').addEventListener('click', function () {
+    var name = document.getElementById('tpl-name').value.trim();
+    if (!name) { toast('Enter a template name'); return; }
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) {
+      document.getElementById('tpl-name').value = '';
+      refreshAll();
+      toast(res.message);
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+      .saveTemplate(name);
+  });
+}
+
+function renderTemplateList() {
+  var container = document.getElementById('template-list');
+  container.innerHTML = '';
+  if (!APP.templates.length) {
+    container.innerHTML = '<p class="muted">No saved templates.</p>';
+    return;
+  }
+  APP.templates.forEach(function (tpl) {
+    var div = document.createElement('div');
+    div.className = 'template-card';
+    var d = tpl.data || {};
+    var tCount = (d.teachers || []).length;
+    var rCount = (d.rooms || []).length;
+    div.innerHTML =
+      '<h3>' + esc(tpl.templateName) + '</h3>' +
+      '<p class="muted">' + tCount + ' teacher(s), ' + rCount + ' room(s)</p>' +
+      '<button class="btn btn--sm btn--primary btn-load-tpl" data-name="' + esc(tpl.templateName) + '">Load</button> ' +
+      '<button class="btn btn--sm btn--danger btn-delete-tpl" data-name="' + esc(tpl.templateName) + '">Delete</button>';
+    container.appendChild(div);
+  });
+
+  container.addEventListener('click', function (e) {
+    if (e.target.classList.contains('btn-load-tpl')) {
+      var name = e.target.dataset.name;
+      if (!confirm('Load template "' + name + '"? This will replace current teachers and rooms.')) return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+        .loadTemplate(name);
+    }
+    if (e.target.classList.contains('btn-delete-tpl')) {
+      var name2 = e.target.dataset.name;
+      if (!confirm('Delete template "' + name2 + '"?')) return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Template deleted'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+        .deleteTemplate(name2);
+    }
+  });
 }
 
 // =========================================================================

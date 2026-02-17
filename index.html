@@ -11,10 +11,22 @@
   <h1 class="top-bar__title">VDOE Testing Coordinator</h1>
   <nav class="top-bar__nav">
     <button class="nav-btn active" data-view="students">Students</button>
+    <button class="nav-btn" data-view="teachers">Teachers</button>
     <button class="nav-btn" data-view="rooms">Rooms</button>
+    <button class="nav-btn" data-view="staging">Staging</button>
     <button class="nav-btn" data-view="assign">Assign</button>
+    <button class="nav-btn" data-view="templates">Templates</button>
   </nav>
 </header>
+
+<!-- ===== Grade Switcher (visible globally) ===== -->
+<div class="grade-switcher">
+  <span class="grade-switcher__label">Grade:</span>
+  <button class="grade-btn active" data-grade="">All</button>
+  <button class="grade-btn" data-grade="6">6th</button>
+  <button class="grade-btn" data-grade="7">7th</button>
+  <button class="grade-btn" data-grade="8">8th</button>
+</div>
 
 <!-- ===== Toast / Notifications ===== -->
 <div id="toast" class="toast hidden"></div>
@@ -23,6 +35,30 @@
 <div id="loading" class="loading-overlay hidden">
   <div class="spinner"></div>
   <p>Loading&hellip;</p>
+</div>
+
+<!-- ===== Accommodation Quick-Edit Modal ===== -->
+<div id="accom-modal" class="modal-overlay hidden">
+  <div class="modal card">
+    <h2>Edit Accommodations</h2>
+    <p id="accom-modal-name" class="modal-subtitle"></p>
+    <input type="hidden" id="am-student-id">
+    <fieldset class="form-row">
+      <legend>Accommodations</legend>
+      <label class="cb"><input type="checkbox" id="am-smallgroup"> Small Group</label>
+      <label class="cb"><input type="checkbox" id="am-readaloud"> Read Aloud</label>
+      <label class="cb"><input type="checkbox" id="am-onetoone"> 1:1 Testing</label>
+      <label class="cb"><input type="checkbox" id="am-proximity"> Proximity to Proctor</label>
+      <label class="cb"><input type="checkbox" id="am-prompting"> Prompting</label>
+    </fieldset>
+    <div class="form-row">
+      <label>Other Accommodations<input type="text" id="am-other" placeholder="e.g. Extended Time"></label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" id="am-save">Save</button>
+      <button class="btn btn--secondary" id="am-cancel">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- ============================================================ -->
@@ -37,7 +73,7 @@
         <label>Student ID<input type="text" id="sf-id" required></label>
         <label>Grade
           <select id="sf-grade" required>
-            <option value="">—</option>
+            <option value="">--</option>
             <option value="6">6</option>
             <option value="7">7</option>
             <option value="8">8</option>
@@ -66,16 +102,8 @@
   </div>
 
   <div class="card">
-    <h2>Student Roster</h2>
+    <h2>Student Roster <span id="roster-count" class="count-badge"></span></h2>
     <div class="filter-bar">
-      <label>Filter Grade:
-        <select id="roster-grade-filter">
-          <option value="">All</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8">8</option>
-        </select>
-      </label>
       <label>Filter Accommodation:
         <select id="roster-acc-filter">
           <option value="">All</option>
@@ -101,17 +129,79 @@
 </section>
 
 <!-- ============================================================ -->
-<!-- VIEW 2 — Room Management                                      -->
+<!-- VIEW 2 — Teacher Management                                   -->
+<!-- ============================================================ -->
+<section id="view-teachers" class="view hidden">
+  <div class="card">
+    <h2>Add / Edit Teacher</h2>
+    <form id="teacher-form" autocomplete="off">
+      <div class="form-row">
+        <label>Teacher Name<input type="text" id="tf-name" required></label>
+        <label>Teacher ID<input type="text" id="tf-id" required></label>
+        <label>Room Number<input type="text" id="tf-room" placeholder="e.g. 101"></label>
+      </div>
+      <div class="form-row">
+        <label>Hallway / Location<input type="text" id="tf-hallway" placeholder="e.g. 6th Grade Hall"></label>
+        <label>Grade
+          <select id="tf-grade">
+            <option value="">-- (Elective / Shared)</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary" id="tf-submit-btn">Add Teacher</button>
+        <button type="button" class="btn btn--secondary" id="tf-cancel-btn" style="display:none">Cancel Edit</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Teacher Roster <span id="teacher-count" class="count-badge"></span></h2>
+    <div class="table-wrap">
+      <table id="teacher-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Room #</th><th>Hallway</th><th>Grade</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 3 — Room Management                                      -->
 <!-- ============================================================ -->
 <section id="view-rooms" class="view hidden">
   <div class="card">
     <h2>Add Room</h2>
     <form id="room-form" autocomplete="off">
       <div class="form-row">
-        <label>Room Name<input type="text" id="rf-name" required></label>
+        <label>Room Label (unique name)<input type="text" id="rf-name" required placeholder="e.g. Library"></label>
+        <label>Room Number<input type="text" id="rf-number" placeholder="e.g. 101"></label>
+        <label>Hallway / Location<input type="text" id="rf-hallway" placeholder="e.g. 6th Grade Hall"></label>
+      </div>
+      <div class="form-row">
         <label>Rows<input type="number" id="rf-rows" min="1" max="20" value="5" required></label>
         <label>Columns<input type="number" id="rf-cols" min="1" max="20" value="6" required></label>
         <label>Max Capacity (0 = auto)<input type="number" id="rf-cap" min="0" value="0"></label>
+      </div>
+      <div class="form-row">
+        <label>Assigned Teacher
+          <select id="rf-teacher"><option value="">-- None --</option></select>
+        </label>
+        <label>Grade
+          <select id="rf-grade">
+            <option value="">-- Any --</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </label>
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn--primary">Add Room</button>
@@ -120,13 +210,50 @@
   </div>
 
   <div class="card">
-    <h2>Rooms</h2>
+    <h2>Rooms <span id="room-count" class="count-badge"></span></h2>
     <div id="room-list" class="room-cards"></div>
   </div>
 </section>
 
 <!-- ============================================================ -->
-<!-- VIEW 3 — Drag-and-Drop Assignment                             -->
+<!-- VIEW 4 — Staging Ground                                       -->
+<!-- ============================================================ -->
+<section id="view-staging" class="view hidden">
+  <div class="staging-layout">
+    <!-- Left: Students available to stage -->
+    <div class="panel panel--students card">
+      <h2>Available Students</h2>
+      <div class="filter-bar">
+        <label>Accommodation:
+          <select id="staging-acc-filter">
+            <option value="">All</option>
+            <option value="smallGroup">Small Group</option>
+            <option value="readAloud">Read Aloud</option>
+            <option value="oneToOne">1:1 Testing</option>
+            <option value="proximity">Proximity</option>
+            <option value="prompting">Prompting</option>
+          </select>
+        </label>
+      </div>
+      <ul id="staging-student-list" class="student-list"></ul>
+    </div>
+
+    <!-- Right: Staging groups -->
+    <div class="panel panel--staging card">
+      <div class="staging-toolbar">
+        <h2>Staging Groups</h2>
+        <div class="form-row" style="margin-bottom:0">
+          <input type="text" id="new-group-name" placeholder="New group name...">
+          <button class="btn btn--primary btn--sm" id="btn-create-group">Create Group</button>
+        </div>
+      </div>
+      <div id="staging-groups-container"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 5 — Drag-and-Drop Assignment                             -->
 <!-- ============================================================ -->
 <section id="view-assign" class="view hidden">
   <div class="assign-layout">
@@ -135,14 +262,6 @@
     <div class="panel panel--students card">
       <h2>Unassigned Students</h2>
       <div class="filter-bar">
-        <label>Grade:
-          <select id="assign-grade-filter">
-            <option value="">All</option>
-            <option value="6">6</option>
-            <option value="7">7</option>
-            <option value="8">8</option>
-          </select>
-        </label>
         <label>Accommodation:
           <select id="assign-acc-filter">
             <option value="">All</option>
@@ -164,15 +283,36 @@
           <select id="grid-room-select"></select>
         </label>
         <button class="btn btn--accent" id="btn-auto-suggest">Auto-Suggest</button>
-        <label>Small-Group Limit:
+        <label>SG Limit:
           <input type="number" id="sg-limit" value="10" min="1" max="30" style="width:60px">
         </label>
         <button class="btn btn--primary" id="btn-finalize">Finalize Layout</button>
       </div>
+      <div id="grid-room-info" class="room-info-bar"></div>
       <div class="proctor-label">PROCTOR STATION (Row 1)</div>
       <div id="grid-container" class="grid-container"></div>
       <div id="grid-warnings" class="warnings"></div>
     </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 6 — School Templates                                     -->
+<!-- ============================================================ -->
+<section id="view-templates" class="view hidden">
+  <div class="card">
+    <h2>School Layout Templates</h2>
+    <p class="muted" style="margin-bottom:.75rem">Save the current Teachers + Rooms configuration as a reusable template. Loading a template replaces all teachers and rooms.</p>
+    <div class="form-row">
+      <label>Template Name<input type="text" id="tpl-name" placeholder="e.g. Spring 2026 SOLs"></label>
+      <div class="form-actions" style="align-self:flex-end">
+        <button class="btn btn--primary" id="btn-save-template">Save Current Layout</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Saved Templates</h2>
+    <div id="template-list"></div>
   </div>
 </section>
 
