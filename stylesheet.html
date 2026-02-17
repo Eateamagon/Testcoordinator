@@ -761,6 +761,13 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
 .floor-dot-1 { border: 2px solid var(--clr-primary); background: var(--clr-primary-light); }
 .floor-dot-2 { border: 3px double var(--clr-gold); background: var(--clr-gold-light); }
 
+/* --- Floor Dimming (non-active floor) --- */
+.designer-room.floor-dimmed {
+  opacity: 0.2;
+  filter: grayscale(60%);
+  pointer-events: none;
+}
+
 /* --- Resize Handle --- */
 .resize-handle {
   position: absolute; width: 10px; height: 10px;
@@ -791,6 +798,22 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
   border: 1px solid rgba(0,0,0,.15); margin-right: .35rem;
 }
 .props-actions { display: flex; gap: .35rem; margin-top: .5rem; }
+
+/* ---------- Layout Item List ---------- */
+.layout-item {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .35rem .5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius);
+  margin-bottom: .35rem;
+  font-size: .78rem;
+  transition: border-color .15s;
+}
+.layout-item:hover { border-color: var(--clr-primary); }
+.layout-item-name { font-weight: 600; color: var(--clr-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layout-item-meta { color: var(--clr-muted); font-size: .72rem; white-space: nowrap; }
 
 /* ---------- Export Styles (print) ---------- */
 @media print {

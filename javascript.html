@@ -14,7 +14,10 @@ var APP = {
   designerRooms: [],
   designerSelectedId: null,
   designerFloor: '1',
+  designerFloorView: '',
   designerTool: 'classroom',
+  designerLayouts: [],
+  backups: [],
   _drawing: false, _drawStart: null,
   _dragging: false, _dragRoom: null, _dragStart: null, _dragOriginal: null,
   _resizing: false, _resizeRoom: null, _resizeStart: null, _resizeOriginal: null
@@ -52,6 +55,7 @@ document.addEventListener('DOMContentLoaded', function () {
   initTemplateView();
   initAccomModal();
   initDesigner();
+  initBackupView();
   refreshAll();
 });
 
@@ -138,6 +142,8 @@ function initNav() {
       if (btn.dataset.view === 'assign') renderAssignView();
       if (btn.dataset.view === 'staging') renderStagingView();
       if (btn.dataset.view === 'rooms') populateTeacherDropdown();
+      if (btn.dataset.view === 'designer') refreshDesignerLayouts();
+      if (btn.dataset.view === 'templates') refreshBackups();
     });
   });
 }
@@ -903,13 +909,15 @@ function initDesigner() {
     palette.appendChild(btn);
   });
 
-  // Floor color-code selector for new rooms
+  // Floor view selector (Both / Floor 1 / Floor 2)
   document.querySelectorAll('.designer-floor-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.remove('active'); });
       btn.classList.add('active');
-      APP.designerFloor = btn.dataset.dfloor;
-      toast('New rooms will be placed on Floor ' + APP.designerFloor);
+      APP.designerFloorView = btn.dataset.dfloor;
+      if (btn.dataset.dfloor) APP.designerFloor = btn.dataset.dfloor;
+      renderDesignerCanvas();
+      toast(btn.dataset.dfloor ? 'Viewing Floor ' + btn.dataset.dfloor + ' — new rooms on Floor ' + btn.dataset.dfloor : 'Viewing both floors');
     });
   });
 
@@ -934,12 +942,6 @@ function initDesigner() {
   });
 
   // Action buttons
-  var exSchoolBtn = document.getElementById('btn-example-school');
-  exSchoolBtn.addEventListener('click', function () {
-    disableBtn(exSchoolBtn, 'Loading...');
-    loadExampleSchool();
-    enableBtn(exSchoolBtn);
-  });
   var importBtn = document.getElementById('btn-import-rooms');
   importBtn.addEventListener('click', function () {
     importDesignerToRooms(importBtn);
@@ -954,8 +956,24 @@ function initDesigner() {
       toast('Canvas cleared');
     }
   });
-  var exDataBtn = document.getElementById('btn-load-example-data');
-  exDataBtn.addEventListener('click', function () { loadAllExampleData(exDataBtn); });
+  // Save layout button
+  var saveLayoutBtn = document.getElementById('btn-save-layout');
+  saveLayoutBtn.addEventListener('click', function () {
+    var name = document.getElementById('designer-layout-name').value.trim();
+    if (!name) { toast('Enter a layout name'); return; }
+    if (!APP.designerRooms.length) { toast('No rooms on canvas to save'); return; }
+    disableBtn(saveLayoutBtn, 'Saving...');
+    var json = JSON.stringify(APP.designerRooms);
+    google.script.run.withSuccessHandler(function (res) {
+      document.getElementById('designer-layout-name').value = '';
+      enableBtn(saveLayoutBtn);
+      refreshDesignerLayouts();
+      toast(res.message);
+    }).withFailureHandler(function (e) {
+      toast('Error: ' + e.message);
+      enableBtn(saveLayoutBtn);
+    }).saveDesignerLayout(name, json);
+  });
 }
 
 function snapGrid(px) { return Math.round(px / GRID); }
@@ -1062,11 +1080,12 @@ function onCanvasMouseUp(e) {
       var type = APP.designerTool;
       var info = ROOM_TYPES[type];
       var count = APP.designerRooms.filter(function (r) { return r.type === type; }).length + 1;
+      var newFloor = APP.designerFloorView || APP.designerFloor || '1';
       var newRoom = {
         id: 'dr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
         name: info.label + ' ' + count,
         type: type,
-        floor: APP.designerFloor,
+        floor: newFloor,
         hallway: '', roomNumber: '',
         gridX: left, gridY: top, gridW: w, gridH: h,
         capacity: Math.max(1, w * h)
@@ -1112,8 +1131,9 @@ function renderDesignerCanvas() {
   APP.designerRooms.forEach(function (room) {
     var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
     var floorClass = room.floor === '2' ? ' floor-2' : ' floor-1';
+    var dimmed = APP.designerFloorView && room.floor !== APP.designerFloorView ? ' floor-dimmed' : '';
     var el = document.createElement('div');
-    el.className = 'designer-room' + floorClass + (room.id === APP.designerSelectedId ? ' selected' : '');
+    el.className = 'designer-room' + floorClass + dimmed + (room.id === APP.designerSelectedId ? ' selected' : '');
     el.dataset.roomId = room.id;
     el.style.left = (room.gridX * GRID) + 'px';
     el.style.top = (room.gridY * GRID) + 'px';
@@ -1194,48 +1214,6 @@ function renderDesignerProps() {
   });
 }
 
-// =========================================================================
-// Example School Layout (Designer)
-// =========================================================================
-
-function loadExampleSchool() {
-  APP.designerRooms = [
-    // === Floor 1 (rows 1–11) ===
-    { id: 'ex01', name: 'Main Office', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'OFF', gridX: 1, gridY: 1, gridW: 6, gridH: 3, capacity: 12 },
-    { id: 'ex02', name: 'Principal', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'P01', gridX: 7, gridY: 1, gridW: 3, gridH: 3, capacity: 4 },
-    { id: 'ex03', name: 'Counselor', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'C01', gridX: 10, gridY: 1, gridW: 3, gridH: 3, capacity: 4 },
-    { id: 'ex04', name: '1F Hallway', type: 'hallway', floor: '1', hallway: 'Main Hall', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, capacity: 0 },
-    { id: 'ex05', name: 'Room 101', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '101', gridX: 1, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
-    { id: 'ex06', name: 'Room 102', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '102', gridX: 7, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
-    { id: 'ex07', name: 'Room 103', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '103', gridX: 13, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
-    { id: 'ex08', name: 'Library', type: 'library', floor: '1', hallway: 'Main Hall', roomNumber: 'LIB', gridX: 14, gridY: 1, gridW: 8, gridH: 3, capacity: 48 },
-    { id: 'ex09', name: 'Cafeteria', type: 'cafeteria', floor: '1', hallway: 'Main Hall', roomNumber: 'CAF', gridX: 23, gridY: 1, gridW: 8, gridH: 3, capacity: 80 },
-    { id: 'ex10', name: 'Gymnasium', type: 'gym', floor: '1', hallway: 'Athletics Wing', roomNumber: 'GYM', gridX: 32, gridY: 1, gridW: 7, gridH: 5, capacity: 80 },
-    { id: 'ex11', name: 'Boys RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'BR1', gridX: 20, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
-    { id: 'ex12', name: 'Girls RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'GR1', gridX: 23, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
-    { id: 'ex13', name: 'Storage', type: 'storage', floor: '1', hallway: 'Main Hall', roomNumber: 'ST1', gridX: 27, gridY: 6, gridW: 3, gridH: 3, capacity: 0 },
-    { id: 'ex14', name: 'Computer Lab', type: 'lab', floor: '1', hallway: 'Main Hall', roomNumber: '110', gridX: 31, gridY: 6, gridW: 6, gridH: 5, capacity: 30 },
-
-    // === Floor 2 (rows 14–24, offset +13 from floor 1) ===
-    { id: 'ex20', name: '2F Hallway', type: 'hallway', floor: '2', hallway: '', roomNumber: '', gridX: 1, gridY: 17, gridW: 38, gridH: 2, capacity: 0 },
-    { id: 'ex21', name: 'Room 201', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '201', gridX: 1, gridY: 14, gridW: 6, gridH: 3, capacity: 30 },
-    { id: 'ex22', name: 'Room 202', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '202', gridX: 7, gridY: 14, gridW: 6, gridH: 3, capacity: 30 },
-    { id: 'ex23', name: 'Room 203', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '203', gridX: 13, gridY: 14, gridW: 6, gridH: 3, capacity: 30 },
-    { id: 'ex24', name: 'Room 301', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '301', gridX: 1, gridY: 19, gridW: 6, gridH: 5, capacity: 36 },
-    { id: 'ex25', name: 'Room 302', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '302', gridX: 7, gridY: 19, gridW: 6, gridH: 5, capacity: 36 },
-    { id: 'ex26', name: 'Science Lab', type: 'lab', floor: '2', hallway: '8th Grade Hall', roomNumber: '310', gridX: 13, gridY: 19, gridW: 7, gridH: 5, capacity: 30 },
-    { id: 'ex27', name: 'Art Room', type: 'classroom', floor: '2', hallway: 'Electives Wing', roomNumber: '220', gridX: 20, gridY: 14, gridW: 6, gridH: 3, capacity: 25 },
-    { id: 'ex28', name: 'Music Room', type: 'auditorium', floor: '2', hallway: 'Electives Wing', roomNumber: '221', gridX: 26, gridY: 14, gridW: 6, gridH: 3, capacity: 36 },
-    { id: 'ex29', name: 'Boys RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'BR2', gridX: 21, gridY: 19, gridW: 3, gridH: 3, capacity: 0 },
-    { id: 'ex30', name: 'Girls RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'GR2', gridX: 24, gridY: 19, gridW: 3, gridH: 3, capacity: 0 },
-    { id: 'ex31', name: 'Teachers Lounge', type: 'office', floor: '2', hallway: '', roomNumber: 'TL', gridX: 33, gridY: 14, gridW: 5, gridH: 3, capacity: 12 }
-  ];
-  APP.designerSelectedId = null;
-  renderDesignerCanvas();
-  renderDesignerProps();
-  toast('Example school layout loaded — rooms color-coded by floor');
-}
-
 function capacityToGrid(cap) {
   if (cap <= 0) return { rows: 1, columns: 1 };
   var cols = Math.ceil(Math.sqrt(cap));
@@ -1274,22 +1252,117 @@ function importDesignerToRooms(triggerBtn) {
 }
 
 // =========================================================================
-// Load Example Data (All Views)
+// Designer Layout Save/Load
 // =========================================================================
 
-function loadAllExampleData(triggerBtn) {
-  if (!confirm('Load example data? This will add example teachers, rooms, and students to demonstrate all features.')) return;
-  disableBtn(triggerBtn, 'Loading...');
-  showLoading(true);
-  google.script.run.withSuccessHandler(function (res) {
-    enableBtn(triggerBtn);
-    refreshAll();
-    loadExampleSchool();
-    toast(res.message || 'Example data loaded');
-  }).withFailureHandler(function (e) {
-    toast('Error: ' + e.message);
-    showLoading(false);
-    enableBtn(triggerBtn);
-  }).loadExampleData();
+function refreshDesignerLayouts() {
+  google.script.run.withSuccessHandler(function (d) {
+    APP.designerLayouts = d || [];
+    renderDesignerLayoutList();
+  }).withFailureHandler(function () {}).getDesignerLayouts();
+}
+
+function renderDesignerLayoutList() {
+  var container = document.getElementById('designer-layout-list');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!APP.designerLayouts.length) { container.innerHTML = '<p class="muted">No saved layouts.</p>'; return; }
+  APP.designerLayouts.forEach(function (layout) {
+    var div = document.createElement('div'); div.className = 'layout-item';
+    div.innerHTML = '<span class="layout-item-name">' + esc(layout.layoutName) + '</span>' +
+      '<span class="layout-item-meta">' + layout.roomCount + ' rooms</span>' +
+      '<button class="btn btn--sm btn--primary btn-load-layout" data-name="' + esc(layout.layoutName) + '">Load</button>' +
+      '<button class="btn btn--sm btn--danger btn-delete-layout" data-name="' + esc(layout.layoutName) + '">Del</button>';
+    container.appendChild(div);
+  });
+  container.addEventListener('click', function (e) {
+    if (e.target.classList.contains('btn-load-layout')) {
+      var name = e.target.dataset.name;
+      if (APP.designerRooms.length && !confirm('Load "' + name + '"? This replaces the current canvas.')) return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          APP.designerRooms = res.rooms || [];
+          APP.designerSelectedId = null;
+          renderDesignerCanvas();
+          renderDesignerProps();
+          toast('Layout "' + name + '" loaded');
+        } else { toast(res.message || 'Failed to load layout'); }
+      }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).loadDesignerLayout(name);
+    }
+    if (e.target.classList.contains('btn-delete-layout')) {
+      var name = e.target.dataset.name;
+      if (!confirm('Delete layout "' + name + '"?')) return;
+      google.script.run.withSuccessHandler(function () { refreshDesignerLayouts(); toast('Layout deleted'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteDesignerLayout(name);
+    }
+  });
+}
+
+// =========================================================================
+// Full Data Backup
+// =========================================================================
+
+function initBackupView() {
+  var createBtn = document.getElementById('btn-create-backup');
+  createBtn.addEventListener('click', function () {
+    var name = document.getElementById('backup-name').value.trim();
+    if (!name) { toast('Enter a backup name'); return; }
+    disableBtn(createBtn, 'Saving...');
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) {
+      document.getElementById('backup-name').value = '';
+      enableBtn(createBtn);
+      showLoading(false);
+      refreshBackups();
+      toast(res.message);
+    }).withFailureHandler(function (e) {
+      toast('Error: ' + e.message);
+      showLoading(false);
+      enableBtn(createBtn);
+    }).createFullBackup(name);
+  });
+}
+
+function refreshBackups() {
+  google.script.run.withSuccessHandler(function (d) {
+    APP.backups = d || [];
+    renderBackupList();
+  }).withFailureHandler(function () {}).getFullBackups();
+}
+
+function renderBackupList() {
+  var container = document.getElementById('backup-list');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!APP.backups.length) { container.innerHTML = '<p class="muted">No saved backups.</p>'; return; }
+  APP.backups.forEach(function (b) {
+    var div = document.createElement('div'); div.className = 'template-card';
+    var dateStr = b.createdAt ? new Date(b.createdAt).toLocaleString() : '';
+    div.innerHTML = '<h3>' + esc(b.backupName) + '</h3>' +
+      '<p class="muted">' + b.studentCount + ' students, ' + b.teacherCount + ' teachers, ' + b.roomCount + ' rooms' +
+      (dateStr ? ' — ' + dateStr : '') + '</p>' +
+      '<button class="btn btn--sm btn--primary btn-restore-backup" data-name="' + esc(b.backupName) + '">Restore</button> ' +
+      '<button class="btn btn--sm btn--danger btn-delete-backup" data-name="' + esc(b.backupName) + '">Delete</button>';
+    container.appendChild(div);
+  });
+  container.addEventListener('click', function (e) {
+    if (e.target.classList.contains('btn-restore-backup')) {
+      var name = e.target.dataset.name;
+      if (!confirm('Restore backup "' + name + '"? This replaces ALL current students, teachers, rooms, assignments, staging, and filler cells.')) return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) {
+        if (res.success) { refreshAll(); toast(res.message); }
+        else { toast(res.message || 'Restore failed'); showLoading(false); }
+      }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).restoreFullBackup(name);
+    }
+    if (e.target.classList.contains('btn-delete-backup')) {
+      var name = e.target.dataset.name;
+      if (!confirm('Delete backup "' + name + '"?')) return;
+      google.script.run.withSuccessHandler(function () { refreshBackups(); toast('Backup deleted'); })
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteFullBackup(name);
+    }
+  });
 }
 </script>
