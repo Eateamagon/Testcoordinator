@@ -16,6 +16,7 @@
     <button class="nav-btn active" data-view="students">Students</button>
     <button class="nav-btn" data-view="teachers">Teachers</button>
     <button class="nav-btn" data-view="rooms">Rooms</button>
+    <button class="nav-btn" data-view="designer">Designer</button>
     <button class="nav-btn" data-view="staging">Staging</button>
     <button class="nav-btn" data-view="assign">Assign</button>
     <button class="nav-btn" data-view="templates">Templates</button>
@@ -34,6 +35,8 @@
   <button class="floor-btn active" data-floor="">Both</button>
   <button class="floor-btn" data-floor="1">1st</button>
   <button class="floor-btn" data-floor="2">2nd</button>
+  <span class="grade-switcher__sep"></span>
+  <button class="btn btn--gold btn--sm" id="btn-load-example-data">Load Example Data</button>
 </div>
 
 <!-- ===== Toast ===== -->
@@ -289,6 +292,50 @@
       <div id="grid-container" class="grid-container"></div>
       <div id="grid-warnings" class="warnings"></div>
       <p class="muted" style="margin-top:.5rem">Filler Mode: check the toggle, then click empty cells to block/unblock them. Right-click occupied cells to unassign.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- VIEW 7 — School Layout Designer (Drawing Tool)                -->
+<!-- ============================================================ -->
+<section id="view-designer" class="view hidden">
+  <div class="designer-layout">
+    <!-- Left Sidebar: Palette & Actions -->
+    <div class="designer-sidebar card">
+      <h2>Room Types</h2>
+      <div id="designer-palette" class="palette"></div>
+      <div class="designer-divider"></div>
+      <h2>Designer Floor</h2>
+      <div class="designer-floor-btns">
+        <button class="btn btn--sm designer-floor-btn active" data-dfloor="1">Floor 1</button>
+        <button class="btn btn--sm designer-floor-btn" data-dfloor="2">Floor 2</button>
+      </div>
+      <div class="designer-divider"></div>
+      <h2>Actions</h2>
+      <button class="btn btn--gold btn--block" id="btn-example-school">Load Example School</button>
+      <button class="btn btn--accent btn--block" id="btn-import-rooms">Import to Rooms Tab</button>
+      <button class="btn btn--secondary btn--block" id="btn-clear-designer">Clear Canvas</button>
+      <div class="designer-divider"></div>
+      <p class="muted">Click &amp; drag on the canvas to draw rooms. Click a room to select it. Press Delete to remove. Drag to move, drag corner to resize.</p>
+    </div>
+
+    <!-- Center: Drawing Canvas -->
+    <div class="designer-main card">
+      <div class="designer-toolbar">
+        <span class="designer-info" id="designer-info">Draw rooms on the grid below. No student names required.</span>
+      </div>
+      <div class="designer-canvas-scroll">
+        <div class="designer-canvas" id="designer-canvas"></div>
+      </div>
+    </div>
+
+    <!-- Right Sidebar: Properties Panel -->
+    <div class="designer-props card" id="designer-props-panel">
+      <h2>Room Properties</h2>
+      <div id="designer-props-content">
+        <p class="muted">Draw a room on the canvas or click one to edit its properties.</p>
+      </div>
     </div>
   </div>
 </section>

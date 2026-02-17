@@ -858,6 +858,92 @@ function generateExportHTML() {
   return html.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Load Example Data (all views)
+// ---------------------------------------------------------------------------
+
+function loadExampleData() {
+  ensureSheets_();
+
+  // --- Example Teachers ---
+  var tSheet = getOrCreateSheet_('Teachers');
+  var existingTeachers = tSheet.getDataRange().getValues();
+  if (existingTeachers.length <= 1) {
+    var teachers = [
+      ['T001', 'Mrs. Sarah Johnson',    '101', '6th Grade Hall',  '6'],
+      ['T002', 'Mr. David Williams',    '102', '6th Grade Hall',  '6'],
+      ['T003', 'Ms. Maria Garcia',      '103', '6th Grade Hall',  '6'],
+      ['T004', 'Mr. James Brown',       '201', '7th Grade Hall',  '7'],
+      ['T005', 'Mrs. Lisa Davis',        '202', '7th Grade Hall',  '7'],
+      ['T006', 'Mr. Robert Miller',     '203', '7th Grade Hall',  '7'],
+      ['T007', 'Mrs. Patricia Wilson',  '301', '8th Grade Hall',  '8'],
+      ['T008', 'Mr. Michael Taylor',    '302', '8th Grade Hall',  '8'],
+      ['T009', 'Ms. Jennifer Anderson', 'LIB', 'Main Hall',       ''],
+      ['T010', 'Coach Thomas Martinez', 'GYM', 'Athletics Wing',  '']
+    ];
+    teachers.forEach(function (t) { tSheet.appendRow(t); });
+  }
+
+  // --- Example Rooms ---
+  var rSheet = getOrCreateSheet_('Rooms');
+  var existingRooms = rSheet.getDataRange().getValues();
+  if (existingRooms.length <= 1) {
+    var rooms = [
+      // RoomName, RoomNumber, Hallway, Rows, Cols, MaxCap, TeacherID, Grade, Floor
+      ['Room 101',      '101', '6th Grade Hall',  5, 6, 30, 'T001', '6', '1'],
+      ['Room 102',      '102', '6th Grade Hall',  5, 6, 30, 'T002', '6', '1'],
+      ['Room 103',      '103', '6th Grade Hall',  5, 6, 30, 'T003', '6', '1'],
+      ['Library',       'LIB', 'Main Hall',       6, 8, 48, 'T009', '',  '1'],
+      ['Computer Lab',  '110', 'Main Hall',       5, 6, 30, '',     '',  '1'],
+      ['Gymnasium',     'GYM', 'Athletics Wing',  8, 10,80, 'T010', '',  '1'],
+      ['Room 201',      '201', '7th Grade Hall',  5, 6, 30, 'T004', '7', '2'],
+      ['Room 202',      '202', '7th Grade Hall',  5, 6, 30, 'T005', '7', '2'],
+      ['Room 203',      '203', '7th Grade Hall',  5, 6, 30, 'T006', '7', '2'],
+      ['Room 301',      '301', '8th Grade Hall',  6, 6, 36, 'T007', '8', '2'],
+      ['Room 302',      '302', '8th Grade Hall',  6, 6, 36, 'T008', '8', '2'],
+      ['Science Lab',   '310', '8th Grade Hall',  5, 6, 30, '',     '',  '2'],
+      ['Art Room',      '220', 'Electives Wing',  5, 5, 25, '',     '',  '2'],
+      ['Music Room',    '221', 'Electives Wing',  6, 6, 36, '',     '',  '2']
+    ];
+    rooms.forEach(function (r) { rSheet.appendRow(r); });
+  }
+
+  // --- Example Students (fictional names, various accommodations) ---
+  var sSheet = getOrCreateSheet_('Students');
+  var existingStudents = sSheet.getDataRange().getValues();
+  if (existingStudents.length <= 1) {
+    var students = [
+      // StudentID, Name, Grade, SG, RA, 1:1, PROX, PMPT, Other
+      ['S1001', 'Alex Thompson',   '6', 'Y', '',  '',  '',  '',  ''],
+      ['S1002', 'Jordan Lee',      '6', '',  'Y', '',  '',  '',  ''],
+      ['S1003', 'Casey Smith',     '6', '',  '',  '',  'Y', '',  ''],
+      ['S1004', 'Riley Johnson',   '6', '',  '',  '',  '',  '',  ''],
+      ['S1005', 'Morgan White',    '6', '',  '',  '',  '',  'Y', ''],
+      ['S1006', 'Taylor Clark',    '6', 'Y', 'Y', '',  '',  '',  ''],
+      ['S1007', 'Blake Adams',     '6', '',  '',  '',  '',  '',  ''],
+      ['S1008', 'Avery Nelson',    '6', '',  '',  '',  '',  '',  'Extended Time'],
+      ['S2001', 'Drew Martin',     '7', '',  '',  'Y', '',  '',  ''],
+      ['S2002', 'Sam Rodriguez',   '7', '',  '',  '',  '',  '',  ''],
+      ['S2003', 'Chris Lopez',     '7', '',  '',  '',  'Y', 'Y', ''],
+      ['S2004', 'Cameron Wright',  '7', 'Y', '',  '',  '',  '',  ''],
+      ['S2005', 'Quinn Harris',    '7', '',  'Y', '',  '',  '',  ''],
+      ['S2006', 'Dakota Perez',    '7', '',  '',  '',  '',  '',  ''],
+      ['S2007', 'Skyler Thomas',   '7', 'Y', 'Y', '',  'Y', '',  ''],
+      ['S3001', 'Jamie Walker',    '8', '',  '',  '',  '',  '',  'Extended Time'],
+      ['S3002', 'Pat Gonzalez',    '8', 'Y', '',  '',  '',  '',  ''],
+      ['S3003', 'Reese Campbell',  '8', '',  'Y', '',  'Y', '',  ''],
+      ['S3004', 'Finley Scott',    '8', '',  '',  '',  '',  '',  ''],
+      ['S3005', 'Emerson Hill',    '8', '',  '',  'Y', '',  '',  ''],
+      ['S3006', 'Harper Young',    '8', '',  '',  '',  '',  'Y', ''],
+      ['S3007', 'Rowan King',      '8', 'Y', '',  '',  '',  '',  ''],
+      ['S3008', 'Sage Allen',      '8', '',  '',  '',  '',  '',  '']
+    ];
+    students.forEach(function (s) { sSheet.appendRow(s); });
+  }
+
+  return { success: true, message: 'Example data loaded — 10 teachers, 14 rooms, 23 students with accommodations.' };
+}
+
 function buildAccommodationCodes_(student) {
   var codes = [];
   if (student.smallGroup) codes.push('SG');

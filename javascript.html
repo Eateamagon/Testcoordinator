@@ -9,7 +9,32 @@ var APP = {
   selectedRoom: null,
   gradeFilter: '',
   floorFilter: '',
-  fillerMode: false
+  fillerMode: false,
+  // Designer state
+  designerRooms: [],
+  designerSelectedId: null,
+  designerFloor: '1',
+  designerTool: 'classroom',
+  _drawing: false, _drawStart: null,
+  _dragging: false, _dragRoom: null, _dragStart: null, _dragOriginal: null,
+  _resizing: false, _resizeRoom: null, _resizeStart: null, _resizeOriginal: null
+};
+
+var GRID = 30;
+var CANVAS_COLS = 40;
+var CANVAS_ROWS = 25;
+
+var ROOM_TYPES = {
+  classroom:  { label: 'Classroom',  color: '#3b82f6', bg: '#dbeafe' },
+  office:     { label: 'Office',     color: '#64748b', bg: '#f1f5f9' },
+  library:    { label: 'Library',    color: '#d97706', bg: '#fef3c7' },
+  lab:        { label: 'Science Lab',color: '#059669', bg: '#d1fae5' },
+  gym:        { label: 'Gymnasium',  color: '#dc2626', bg: '#fee2e2' },
+  cafeteria:  { label: 'Cafeteria',  color: '#ea580c', bg: '#ffedd5' },
+  restroom:   { label: 'Restroom',   color: '#6b7280', bg: '#f3f4f6' },
+  hallway:    { label: 'Hallway',    color: '#9ca3af', bg: '#f9fafb' },
+  auditorium: { label: 'Auditorium', color: '#7c3aed', bg: '#ede9fe' },
+  storage:    { label: 'Storage',    color: '#92400e', bg: '#fef3c7' }
 };
 
 // =========================================================================
@@ -26,6 +51,7 @@ document.addEventListener('DOMContentLoaded', function () {
   initAssignView();
   initTemplateView();
   initAccomModal();
+  initDesigner();
   refreshAll();
 });
 
@@ -785,4 +811,406 @@ function toast(msg) {
 }
 
 function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
+
+// =========================================================================
+// School Layout Designer (Drawing Tool)
+// =========================================================================
+
+function initDesigner() {
+  // Build palette
+  var palette = document.getElementById('designer-palette');
+  Object.keys(ROOM_TYPES).forEach(function (key) {
+    var t = ROOM_TYPES[key];
+    var btn = document.createElement('button');
+    btn.className = 'palette-btn' + (key === APP.designerTool ? ' active' : '');
+    btn.dataset.type = key;
+    btn.innerHTML = '<span class="palette-swatch" style="background:' + t.color + '"></span>' + t.label;
+    btn.addEventListener('click', function () {
+      palette.querySelectorAll('.palette-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      APP.designerTool = key;
+    });
+    palette.appendChild(btn);
+  });
+
+  // Floor buttons
+  document.querySelectorAll('.designer-floor-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      APP.designerFloor = btn.dataset.dfloor;
+      renderDesignerCanvas();
+    });
+  });
+
+  // Canvas setup
+  var canvas = document.getElementById('designer-canvas');
+  canvas.style.width = (CANVAS_COLS * GRID) + 'px';
+  canvas.style.height = (CANVAS_ROWS * GRID) + 'px';
+
+  var preview = document.createElement('div');
+  preview.id = 'draw-preview';
+  preview.className = 'designer-preview hidden';
+  canvas.appendChild(preview);
+
+  canvas.addEventListener('mousedown', onCanvasMouseDown);
+  document.addEventListener('mousemove', onCanvasMouseMove);
+  document.addEventListener('mouseup', onCanvasMouseUp);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Delete' && APP.designerSelectedId) {
+      deleteDesignerRoom(APP.designerSelectedId);
+    }
+  });
+
+  // Action buttons
+  document.getElementById('btn-example-school').addEventListener('click', loadExampleSchool);
+  document.getElementById('btn-import-rooms').addEventListener('click', importDesignerToRooms);
+  document.getElementById('btn-clear-designer').addEventListener('click', function () {
+    if (!APP.designerRooms.length || confirm('Clear all rooms from the canvas?')) {
+      APP.designerRooms = [];
+      APP.designerSelectedId = null;
+      renderDesignerCanvas();
+      renderDesignerProps();
+      toast('Canvas cleared');
+    }
+  });
+  document.getElementById('btn-load-example-data').addEventListener('click', loadAllExampleData);
+}
+
+function snapGrid(px) { return Math.round(px / GRID); }
+
+function getCanvasCoords(e) {
+  var canvas = document.getElementById('designer-canvas');
+  var rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left + canvas.scrollLeft, y: e.clientY - rect.top + canvas.scrollTop };
+}
+
+function onCanvasMouseDown(e) {
+  if (e.button !== 0) return;
+  var pos = getCanvasCoords(e);
+
+  // Check resize handle
+  if (e.target.classList.contains('resize-handle')) {
+    var roomId = e.target.parentElement.dataset.roomId;
+    var room = APP.designerRooms.find(function (r) { return r.id === roomId; });
+    if (room) {
+      APP._resizing = true;
+      APP._resizeRoom = roomId;
+      APP._resizeStart = pos;
+      APP._resizeOriginal = { gridX: room.gridX, gridY: room.gridY, gridW: room.gridW, gridH: room.gridH };
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+  }
+
+  // Check room click
+  var roomEl = e.target.closest('.designer-room');
+  if (roomEl) {
+    var id = roomEl.dataset.roomId;
+    selectDesignerRoom(id);
+    var rm = APP.designerRooms.find(function (r) { return r.id === id; });
+    if (rm) {
+      APP._dragging = true;
+      APP._dragRoom = id;
+      APP._dragStart = pos;
+      APP._dragOriginal = { gridX: rm.gridX, gridY: rm.gridY };
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // Start drawing on empty canvas
+  APP.designerSelectedId = null;
+  renderDesignerProps();
+  APP._drawing = true;
+  APP._drawStart = { gx: snapGrid(pos.x), gy: snapGrid(pos.y) };
+  e.preventDefault();
+}
+
+function onCanvasMouseMove(e) {
+  if (APP._drawing) {
+    var pos = getCanvasCoords(e);
+    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+    var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
+    var left = Math.min(sx, gx), top = Math.min(sy, gy);
+    var w = Math.max(2, Math.abs(gx - sx)), h = Math.max(2, Math.abs(gy - sy));
+    var preview = document.getElementById('draw-preview');
+    preview.classList.remove('hidden');
+    preview.style.left = (left * GRID) + 'px';
+    preview.style.top = (top * GRID) + 'px';
+    preview.style.width = (w * GRID) + 'px';
+    preview.style.height = (h * GRID) + 'px';
+    return;
+  }
+
+  if (APP._dragging) {
+    var pos = getCanvasCoords(e);
+    var room = APP.designerRooms.find(function (r) { return r.id === APP._dragRoom; });
+    if (!room) return;
+    var dx = snapGrid(pos.x) - snapGrid(APP._dragStart.x);
+    var dy = snapGrid(pos.y) - snapGrid(APP._dragStart.y);
+    room.gridX = Math.max(0, APP._dragOriginal.gridX + dx);
+    room.gridY = Math.max(0, APP._dragOriginal.gridY + dy);
+    renderDesignerCanvas();
+    return;
+  }
+
+  if (APP._resizing) {
+    var pos = getCanvasCoords(e);
+    var room = APP.designerRooms.find(function (r) { return r.id === APP._resizeRoom; });
+    if (!room) return;
+    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+    room.gridW = Math.max(2, gx - room.gridX);
+    room.gridH = Math.max(2, gy - room.gridY);
+    renderDesignerCanvas();
+    return;
+  }
+}
+
+function onCanvasMouseUp(e) {
+  if (APP._drawing) {
+    var pos = getCanvasCoords(e);
+    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+    var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
+    var left = Math.min(sx, gx), top = Math.min(sy, gy);
+    var w = Math.abs(gx - sx), h = Math.abs(gy - sy);
+    document.getElementById('draw-preview').classList.add('hidden');
+    APP._drawing = false;
+
+    if (w >= 2 && h >= 2) {
+      var type = APP.designerTool;
+      var info = ROOM_TYPES[type];
+      var count = APP.designerRooms.filter(function (r) { return r.type === type; }).length + 1;
+      var seatRows = Math.max(1, Math.round(h * 0.8));
+      var seatCols = Math.max(1, Math.round(w * 0.8));
+      var newRoom = {
+        id: 'dr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        name: info.label + ' ' + count,
+        type: type,
+        floor: APP.designerFloor,
+        hallway: '', roomNumber: '',
+        gridX: left, gridY: top, gridW: w, gridH: h,
+        rows: seatRows, columns: seatCols,
+        capacity: seatRows * seatCols
+      };
+      APP.designerRooms.push(newRoom);
+      selectDesignerRoom(newRoom.id);
+      renderDesignerCanvas();
+      toast('Room "' + newRoom.name + '" created');
+    }
+    return;
+  }
+  APP._dragging = false;
+  APP._resizing = false;
+}
+
+function selectDesignerRoom(id) {
+  APP.designerSelectedId = id;
+  renderDesignerCanvas();
+  renderDesignerProps();
+}
+
+function deleteDesignerRoom(id) {
+  APP.designerRooms = APP.designerRooms.filter(function (r) { return r.id !== id; });
+  if (APP.designerSelectedId === id) APP.designerSelectedId = null;
+  renderDesignerCanvas();
+  renderDesignerProps();
+  toast('Room deleted');
+}
+
+function renderDesignerCanvas() {
+  var canvas = document.getElementById('designer-canvas');
+  // Preserve preview element
+  var preview = document.getElementById('draw-preview');
+  canvas.innerHTML = '';
+  if (preview) canvas.appendChild(preview);
+  else {
+    preview = document.createElement('div');
+    preview.id = 'draw-preview';
+    preview.className = 'designer-preview hidden';
+    canvas.appendChild(preview);
+  }
+
+  var floorRooms = APP.designerRooms.filter(function (r) { return r.floor === APP.designerFloor; });
+  floorRooms.forEach(function (room) {
+    var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
+    var el = document.createElement('div');
+    el.className = 'designer-room' + (room.id === APP.designerSelectedId ? ' selected' : '');
+    el.dataset.roomId = room.id;
+    el.style.left = (room.gridX * GRID) + 'px';
+    el.style.top = (room.gridY * GRID) + 'px';
+    el.style.width = (room.gridW * GRID) + 'px';
+    el.style.height = (room.gridH * GRID) + 'px';
+    el.style.backgroundColor = typeInfo.bg;
+    el.style.borderColor = typeInfo.color;
+
+    el.innerHTML =
+      '<span class="designer-room-label">' + esc(room.name) + '</span>' +
+      '<span class="designer-room-type">' + esc(typeInfo.label) + '</span>' +
+      '<span class="designer-room-size">' + room.rows + '&times;' + room.columns + ' seats</span>';
+
+    if (room.id === APP.designerSelectedId) {
+      var handle = document.createElement('div');
+      handle.className = 'resize-handle';
+      el.appendChild(handle);
+    }
+    canvas.appendChild(el);
+  });
+
+  // Update info
+  var info = document.getElementById('designer-info');
+  if (info) {
+    var total = floorRooms.length;
+    info.textContent = 'Floor ' + APP.designerFloor + ' — ' + total + ' room' + (total !== 1 ? 's' : '') + ' drawn. No student names required.';
+  }
+}
+
+function renderDesignerProps() {
+  var container = document.getElementById('designer-props-content');
+  if (!APP.designerSelectedId) {
+    container.innerHTML = '<p class="muted">Draw a room on the canvas or click one to edit its properties.</p>';
+    return;
+  }
+  var room = APP.designerRooms.find(function (r) { return r.id === APP.designerSelectedId; });
+  if (!room) { container.innerHTML = '<p class="muted">No room selected.</p>'; return; }
+
+  var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
+  var typeOptions = Object.keys(ROOM_TYPES).map(function (k) {
+    return '<option value="' + k + '"' + (k === room.type ? ' selected' : '') + '>' + ROOM_TYPES[k].label + '</option>';
+  }).join('');
+
+  container.innerHTML =
+    '<div class="props-form">' +
+    '<label>Room Name<input type="text" id="dp-name" value="' + esc(room.name) + '"></label>' +
+    '<label>Type<select id="dp-type">' + typeOptions + '</select></label>' +
+    '<label>Room Number<input type="text" id="dp-number" value="' + esc(room.roomNumber) + '" placeholder="e.g. 101"></label>' +
+    '<label>Hallway<input type="text" id="dp-hallway" value="' + esc(room.hallway) + '" placeholder="e.g. 6th Grade Hall"></label>' +
+    '<label>Floor<select id="dp-floor">' +
+      '<option value="1"' + (room.floor === '1' ? ' selected' : '') + '>1st Floor</option>' +
+      '<option value="2"' + (room.floor === '2' ? ' selected' : '') + '>2nd Floor</option>' +
+    '</select></label>' +
+    '<label>Seat Rows<input type="number" id="dp-rows" min="1" max="20" value="' + room.rows + '"></label>' +
+    '<label>Seat Columns<input type="number" id="dp-cols" min="1" max="20" value="' + room.columns + '"></label>' +
+    '<label>Capacity<input type="number" id="dp-cap" min="0" value="' + room.capacity + '"></label>' +
+    '<div style="font-size:.75rem;color:var(--clr-muted)">Position: (' + room.gridX + ', ' + room.gridY + ') — Size: ' + room.gridW + '&times;' + room.gridH + ' cells</div>' +
+    '<div class="props-actions">' +
+    '<button class="btn btn--primary btn--sm" id="dp-save">Apply</button>' +
+    '<button class="btn btn--danger btn--sm" id="dp-delete">Delete Room</button>' +
+    '</div></div>';
+
+  document.getElementById('dp-save').addEventListener('click', function () {
+    room.name = document.getElementById('dp-name').value.trim() || room.name;
+    room.type = document.getElementById('dp-type').value;
+    room.roomNumber = document.getElementById('dp-number').value.trim();
+    room.hallway = document.getElementById('dp-hallway').value.trim();
+    room.floor = document.getElementById('dp-floor').value;
+    room.rows = parseInt(document.getElementById('dp-rows').value, 10) || room.rows;
+    room.columns = parseInt(document.getElementById('dp-cols').value, 10) || room.columns;
+    room.capacity = parseInt(document.getElementById('dp-cap').value, 10) || (room.rows * room.columns);
+    // If floor changed, switch canvas to that floor
+    if (room.floor !== APP.designerFloor) {
+      APP.designerFloor = room.floor;
+      document.querySelectorAll('.designer-floor-btn').forEach(function (b) {
+        b.classList.toggle('active', b.dataset.dfloor === APP.designerFloor);
+      });
+    }
+    renderDesignerCanvas();
+    renderDesignerProps();
+    toast('Room properties updated');
+  });
+
+  document.getElementById('dp-delete').addEventListener('click', function () {
+    deleteDesignerRoom(room.id);
+  });
+}
+
+// =========================================================================
+// Example School Layout (Designer)
+// =========================================================================
+
+function loadExampleSchool() {
+  APP.designerRooms = [
+    // === Floor 1 ===
+    { id: 'ex01', name: 'Main Office', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'OFF', gridX: 1, gridY: 1, gridW: 6, gridH: 3, rows: 3, columns: 4, capacity: 12 },
+    { id: 'ex02', name: 'Principal', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'P01', gridX: 7, gridY: 1, gridW: 3, gridH: 3, rows: 2, columns: 2, capacity: 4 },
+    { id: 'ex03', name: 'Counselor', type: 'office', floor: '1', hallway: 'Main Hall', roomNumber: 'C01', gridX: 10, gridY: 1, gridW: 3, gridH: 3, rows: 2, columns: 2, capacity: 4 },
+    { id: 'ex04', name: 'Main Hallway', type: 'hallway', floor: '1', hallway: 'Main Hall', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex05', name: 'Room 101', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '101', gridX: 1, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex06', name: 'Room 102', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '102', gridX: 7, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex07', name: 'Room 103', type: 'classroom', floor: '1', hallway: '6th Grade Hall', roomNumber: '103', gridX: 13, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex08', name: 'Library', type: 'library', floor: '1', hallway: 'Main Hall', roomNumber: 'LIB', gridX: 14, gridY: 1, gridW: 8, gridH: 3, rows: 6, columns: 8, capacity: 48 },
+    { id: 'ex09', name: 'Cafeteria', type: 'cafeteria', floor: '1', hallway: 'Main Hall', roomNumber: 'CAF', gridX: 23, gridY: 1, gridW: 8, gridH: 3, rows: 8, columns: 10, capacity: 80 },
+    { id: 'ex10', name: 'Gymnasium', type: 'gym', floor: '1', hallway: 'Athletics Wing', roomNumber: 'GYM', gridX: 32, gridY: 1, gridW: 7, gridH: 5, rows: 8, columns: 10, capacity: 80 },
+    { id: 'ex11', name: 'Boys RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'BR1', gridX: 20, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex12', name: 'Girls RR', type: 'restroom', floor: '1', hallway: 'Main Hall', roomNumber: 'GR1', gridX: 23, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex13', name: 'Storage', type: 'storage', floor: '1', hallway: 'Main Hall', roomNumber: 'ST1', gridX: 27, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex14', name: 'Computer Lab', type: 'lab', floor: '1', hallway: 'Main Hall', roomNumber: '110', gridX: 31, gridY: 6, gridW: 6, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+
+    // === Floor 2 ===
+    { id: 'ex20', name: '2nd Floor Hall', type: 'hallway', floor: '2', hallway: '', roomNumber: '', gridX: 1, gridY: 4, gridW: 38, gridH: 2, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex21', name: 'Room 201', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '201', gridX: 1, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex22', name: 'Room 202', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '202', gridX: 7, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex23', name: 'Room 203', type: 'classroom', floor: '2', hallway: '7th Grade Hall', roomNumber: '203', gridX: 13, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex24', name: 'Room 301', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '301', gridX: 1, gridY: 6, gridW: 6, gridH: 5, rows: 6, columns: 6, capacity: 36 },
+    { id: 'ex25', name: 'Room 302', type: 'classroom', floor: '2', hallway: '8th Grade Hall', roomNumber: '302', gridX: 7, gridY: 6, gridW: 6, gridH: 5, rows: 6, columns: 6, capacity: 36 },
+    { id: 'ex26', name: 'Science Lab', type: 'lab', floor: '2', hallway: '8th Grade Hall', roomNumber: '310', gridX: 13, gridY: 6, gridW: 7, gridH: 5, rows: 5, columns: 6, capacity: 30 },
+    { id: 'ex27', name: 'Art Room', type: 'classroom', floor: '2', hallway: 'Electives Wing', roomNumber: '220', gridX: 20, gridY: 1, gridW: 6, gridH: 3, rows: 5, columns: 5, capacity: 25 },
+    { id: 'ex28', name: 'Music Room', type: 'auditorium', floor: '2', hallway: 'Electives Wing', roomNumber: '221', gridX: 26, gridY: 1, gridW: 6, gridH: 3, rows: 6, columns: 6, capacity: 36 },
+    { id: 'ex29', name: 'Boys RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'BR2', gridX: 21, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex30', name: 'Girls RR', type: 'restroom', floor: '2', hallway: '', roomNumber: 'GR2', gridX: 24, gridY: 6, gridW: 3, gridH: 3, rows: 1, columns: 1, capacity: 0 },
+    { id: 'ex31', name: 'Teachers Lounge', type: 'office', floor: '2', hallway: '', roomNumber: 'TL', gridX: 33, gridY: 1, gridW: 5, gridH: 3, rows: 3, columns: 4, capacity: 12 }
+  ];
+  APP.designerSelectedId = null;
+  APP.designerFloor = '1';
+  document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.dfloor === '1'); });
+  renderDesignerCanvas();
+  renderDesignerProps();
+  toast('Example school layout loaded — switch floors to see both');
+}
+
+function importDesignerToRooms() {
+  var importable = APP.designerRooms.filter(function (r) {
+    return r.type !== 'hallway' && r.type !== 'restroom' && r.type !== 'storage' && r.capacity > 0;
+  });
+  if (!importable.length) { toast('No importable rooms on canvas'); return; }
+  if (!confirm('Import ' + importable.length + ' rooms to the Rooms tab? (Hallways, restrooms, and storage are skipped.)')) return;
+
+  showLoading(true);
+  var pending = importable.length;
+  var added = 0;
+  importable.forEach(function (dr) {
+    // Check if room already exists
+    if (APP.rooms.some(function (r) { return r.roomName === dr.name; })) { pending--; if (pending <= 0) finishImport(added); return; }
+    var data = {
+      roomName: dr.name, roomNumber: dr.roomNumber, hallway: dr.hallway,
+      rows: String(dr.rows), columns: String(dr.columns),
+      maxCapacity: String(dr.capacity), teacherId: '', grade: '', floor: dr.floor
+    };
+    google.script.run.withSuccessHandler(function () {
+      added++; pending--; if (pending <= 0) finishImport(added);
+    }).withFailureHandler(function () {
+      pending--; if (pending <= 0) finishImport(added);
+    }).addRoom(data);
+  });
+
+  function finishImport(count) { refreshAll(); toast(count + ' room(s) imported to Rooms tab'); }
+}
+
+// =========================================================================
+// Load Example Data (All Views)
+// =========================================================================
+
+function loadAllExampleData() {
+  if (!confirm('Load example data? This will add example teachers, rooms, and students to demonstrate all features.')) return;
+  showLoading(true);
+  google.script.run.withSuccessHandler(function (res) {
+    refreshAll();
+    loadExampleSchool();
+    toast(res.message || 'Example data loaded');
+  }).withFailureHandler(function (e) {
+    toast('Error: ' + e.message);
+    showLoading(false);
+  }).loadExampleData();
+}
 </script>
