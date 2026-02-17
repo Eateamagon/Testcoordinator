@@ -697,7 +697,7 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
   background-image:
     linear-gradient(to right, #f0f0f0 1px, transparent 1px),
     linear-gradient(to bottom, #f0f0f0 1px, transparent 1px);
-  min-width: 1200px; min-height: 750px;
+  min-width: 1200px; min-height: 1200px;
   cursor: crosshair;
   user-select: none;
 }
@@ -727,9 +727,34 @@ th { background: var(--clr-primary-light); font-weight: 600; position: sticky; t
   z-index: 3; border-style: dashed;
   box-shadow: 0 0 0 3px rgba(74,29,150,.35), 0 2px 8px rgba(0,0,0,.15);
 }
-.designer-room-label { font-weight: 700; font-size: .78rem; line-height: 1.2; pointer-events: none; }
-.designer-room-type { font-weight: 400; font-size: .65rem; opacity: .7; pointer-events: none; }
+/* --- Room Content --- */
+.designer-room-icon { font-size: 1.1rem; line-height: 1; pointer-events: none; }
+.designer-room-label { font-weight: 700; font-size: .76rem; line-height: 1.2; pointer-events: none; }
 .designer-room-size { font-weight: 400; font-size: .62rem; opacity: .6; pointer-events: none; }
+
+/* --- Floor Color-Coding --- */
+.designer-room.floor-1 { border-width: 2px; border-style: solid; }
+.designer-room.floor-2 { border-width: 3px; border-style: double; }
+.designer-floor-badge {
+  position: absolute; top: 2px; right: 3px;
+  font-size: .55rem; font-weight: 700;
+  padding: .05rem .25rem; border-radius: 3px;
+  pointer-events: none; line-height: 1.2;
+}
+.floor-badge-1 { background: rgba(74,29,150,.15); color: var(--clr-primary); }
+.floor-badge-2 { background: rgba(212,160,23,.25); color: var(--clr-gold-dark); }
+
+/* --- Palette Icon --- */
+.palette-icon { font-size: .9rem; line-height: 1; }
+
+/* --- Floor Legend --- */
+.floor-legend { display: flex; flex-direction: column; gap: .35rem; font-size: .75rem; }
+.floor-legend-item { display: flex; align-items: center; gap: .4rem; }
+.floor-legend-dot {
+  width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0;
+}
+.floor-dot-1 { border: 2px solid var(--clr-primary); background: var(--clr-primary-light); }
+.floor-dot-2 { border: 3px double var(--clr-gold); background: var(--clr-gold-light); }
 
 /* --- Resize Handle --- */
 .resize-handle {
