@@ -1,0 +1,870 @@
+/**
+ * KCMS VDOE-Compliant Student Testing Coordinator
+ * Server-side Google Apps Script
+ *
+ * Manages Students, Rooms, Teachers, Templates, Staging, Assignments,
+ * and FillerCells sheets. Supports floor designation and PDF/Word export.
+ */
+
+// ---------------------------------------------------------------------------
+// Web App Entry Point
+// ---------------------------------------------------------------------------
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+    .evaluate()
+    .setTitle('KCMS Testing Coordinator')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ---------------------------------------------------------------------------
+// Sheet Helpers
+// ---------------------------------------------------------------------------
+
+function getSpreadsheet_() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getOrCreateSheet_(name, headers) {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    if (headers && headers.length) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+    }
+  }
+  return sheet;
+}
+
+function ensureSheets_() {
+  getOrCreateSheet_('Students', [
+    'StudentID', 'Name', 'Grade',
+    'SmallGroup', 'ReadAloud', 'OneToOne',
+    'Proximity', 'Prompting', 'OtherAccommodations'
+  ]);
+  getOrCreateSheet_('Teachers', [
+    'TeacherID', 'Name', 'RoomNumber', 'Hallway', 'Grade'
+  ]);
+  getOrCreateSheet_('Rooms', [
+    'RoomName', 'RoomNumber', 'Hallway', 'Rows', 'Columns',
+    'MaxCapacity', 'TeacherID', 'Grade', 'Floor'
+  ]);
+  getOrCreateSheet_('Assignments', [
+    'StudentID', 'RoomName', 'Row', 'Column'
+  ]);
+  getOrCreateSheet_('Staging', [
+    'GroupID', 'GroupName', 'StudentID'
+  ]);
+  getOrCreateSheet_('Templates', [
+    'TemplateName', 'DataJSON'
+  ]);
+  getOrCreateSheet_('FillerCells', [
+    'RoomName', 'Row', 'Column'
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Student CRUD
+// ---------------------------------------------------------------------------
+
+function addStudent(data) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Students');
+  sheet.appendRow([
+    data.studentId, data.name, data.grade,
+    data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
+    data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
+    data.prompting ? 'Y' : '', data.otherAccommodations || ''
+  ]);
+  return { success: true };
+}
+
+function getStudents() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Students');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var students = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    students.push({
+      studentId: String(row[0]), name: String(row[1]), grade: String(row[2]),
+      smallGroup: row[3] === 'Y', readAloud: row[4] === 'Y',
+      oneToOne: row[5] === 'Y', proximity: row[6] === 'Y',
+      prompting: row[7] === 'Y', otherAccommodations: String(row[8] || '')
+    });
+  }
+  return students;
+}
+
+function deleteStudent(studentId) {
+  var sheet = getOrCreateSheet_('Students');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(studentId)) { sheet.deleteRow(i + 1); break; }
+  }
+  removeAssignmentsForStudent_(studentId);
+  removeStagingForStudent_(studentId);
+  return { success: true };
+}
+
+function updateStudent(data) {
+  var sheet = getOrCreateSheet_('Students');
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(data.studentId)) {
+      sheet.getRange(i + 1, 1, 1, 9).setValues([[
+        data.studentId, data.name, data.grade,
+        data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
+        data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
+        data.prompting ? 'Y' : '', data.otherAccommodations || ''
+      ]]);
+      break;
+    }
+  }
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Teacher CRUD
+// ---------------------------------------------------------------------------
+
+function addTeacher(data) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Teachers');
+  sheet.appendRow([data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || '']);
+  return { success: true };
+}
+
+function getTeachers() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Teachers');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var teachers = [];
+  for (var i = 1; i < data.length; i++) {
+    teachers.push({
+      teacherId: String(data[i][0]), name: String(data[i][1]),
+      roomNumber: String(data[i][2] || ''), hallway: String(data[i][3] || ''),
+      grade: String(data[i][4] || '')
+    });
+  }
+  return teachers;
+}
+
+function updateTeacher(data) {
+  var sheet = getOrCreateSheet_('Teachers');
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(data.teacherId)) {
+      sheet.getRange(i + 1, 1, 1, 5).setValues([[
+        data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || ''
+      ]]);
+      break;
+    }
+  }
+  return { success: true };
+}
+
+function deleteTeacher(teacherId) {
+  var sheet = getOrCreateSheet_('Teachers');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(teacherId)) { sheet.deleteRow(i + 1); break; }
+  }
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Room CRUD  (now includes Floor)
+// ---------------------------------------------------------------------------
+
+function addRoom(data) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Rooms');
+  var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
+  sheet.appendRow([
+    data.roomName, data.roomNumber || '', data.hallway || '',
+    parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
+    data.teacherId || '', data.grade || '', data.floor || '1'
+  ]);
+  return { success: true };
+}
+
+function getRooms() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Rooms');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var rooms = [];
+  for (var i = 1; i < data.length; i++) {
+    rooms.push({
+      roomName: String(data[i][0]), roomNumber: String(data[i][1] || ''),
+      hallway: String(data[i][2] || ''), rows: parseInt(data[i][3], 10),
+      columns: parseInt(data[i][4], 10), maxCapacity: parseInt(data[i][5], 10) || 0,
+      teacherId: String(data[i][6] || ''), grade: String(data[i][7] || ''),
+      floor: String(data[i][8] || '1')
+    });
+  }
+  return rooms;
+}
+
+function updateRoom(data) {
+  var sheet = getOrCreateSheet_('Rooms');
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === data.roomName) {
+      var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
+      sheet.getRange(i + 1, 1, 1, 9).setValues([[
+        data.roomName, data.roomNumber || '', data.hallway || '',
+        parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
+        data.teacherId || '', data.grade || '', data.floor || '1'
+      ]]);
+      break;
+    }
+  }
+  return { success: true };
+}
+
+function deleteRoom(roomName) {
+  var sheet = getOrCreateSheet_('Rooms');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === roomName) { sheet.deleteRow(i + 1); break; }
+  }
+  removeAssignmentsForRoom_(roomName);
+  removeFillerCellsForRoom_(roomName);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Filler (Blocked) Cells
+// ---------------------------------------------------------------------------
+
+function getFillerCells() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('FillerCells');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var cells = [];
+  for (var i = 1; i < data.length; i++) {
+    cells.push({
+      roomName: String(data[i][0]),
+      row: parseInt(data[i][1], 10),
+      column: parseInt(data[i][2], 10)
+    });
+  }
+  return cells;
+}
+
+function toggleFillerCell(roomName, row, col) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('FillerCells');
+  var data = sheet.getDataRange().getValues();
+  // Check if already exists — if so, remove it
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === roomName &&
+        parseInt(data[i][1], 10) === row &&
+        parseInt(data[i][2], 10) === col) {
+      sheet.deleteRow(i + 1);
+      return { success: true, isFiller: false };
+    }
+  }
+  // Add it
+  sheet.appendRow([roomName, row, col]);
+  return { success: true, isFiller: true };
+}
+
+function removeFillerCellsForRoom_(roomName) {
+  var sheet = getOrCreateSheet_('FillerCells');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === roomName) sheet.deleteRow(i + 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Assignment CRUD
+// ---------------------------------------------------------------------------
+
+function saveAssignment(studentId, roomName, row, col) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Assignments');
+  removeAssignmentsForStudent_(studentId);
+  sheet.appendRow([studentId, roomName, row, col]);
+  return { success: true };
+}
+
+function removeAssignment(studentId) {
+  removeAssignmentsForStudent_(studentId);
+  return { success: true };
+}
+
+function getAssignments() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Assignments');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var assignments = [];
+  for (var i = 1; i < data.length; i++) {
+    assignments.push({
+      studentId: String(data[i][0]), roomName: String(data[i][1]),
+      row: parseInt(data[i][2], 10), column: parseInt(data[i][3], 10)
+    });
+  }
+  return assignments;
+}
+
+function removeAssignmentsForStudent_(studentId) {
+  var sheet = getOrCreateSheet_('Assignments');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === String(studentId)) sheet.deleteRow(i + 1);
+  }
+}
+
+function removeAssignmentsForRoom_(roomName) {
+  var sheet = getOrCreateSheet_('Assignments');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][1]) === roomName) sheet.deleteRow(i + 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Staging Groups
+// ---------------------------------------------------------------------------
+
+function getStagingGroups() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Staging');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var map = {};
+  for (var i = 1; i < data.length; i++) {
+    var gid = String(data[i][0]);
+    if (!map[gid]) map[gid] = { groupId: gid, groupName: String(data[i][1]), studentIds: [] };
+    if (data[i][2]) map[gid].studentIds.push(String(data[i][2]));
+  }
+  var groups = [];
+  for (var k in map) groups.push(map[k]);
+  return groups;
+}
+
+function createStagingGroup(groupName) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Staging');
+  var gid = 'G' + Date.now();
+  sheet.appendRow([gid, groupName, '']);
+  return { success: true, groupId: gid };
+}
+
+function addStudentToStagingGroup(groupId, studentId) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Staging');
+  var data = sheet.getDataRange().getValues();
+  var gName = '';
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === groupId) { gName = String(data[i][1]); break; }
+  }
+  sheet.appendRow([groupId, gName, studentId]);
+  return { success: true };
+}
+
+function removeStudentFromStagingGroup(groupId, studentId) {
+  var sheet = getOrCreateSheet_('Staging');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === groupId && String(data[i][2]) === studentId) {
+      sheet.deleteRow(i + 1); break;
+    }
+  }
+  return { success: true };
+}
+
+function deleteStagingGroup(groupId) {
+  var sheet = getOrCreateSheet_('Staging');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === groupId) sheet.deleteRow(i + 1);
+  }
+  return { success: true };
+}
+
+function removeStagingForStudent_(studentId) {
+  var sheet = getOrCreateSheet_('Staging');
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][2]) === String(studentId)) sheet.deleteRow(i + 1);
+  }
+}
+
+function placeStagingGroupInRoom(groupId, roomName) {
+  ensureSheets_();
+  var groups = getStagingGroups();
+  var group = groups.filter(function (g) { return g.groupId === groupId; })[0];
+  if (!group) return { success: false, message: 'Group not found.' };
+  var rooms = getRooms();
+  var room = rooms.filter(function (r) { return r.roomName === roomName; })[0];
+  if (!room) return { success: false, message: 'Room not found.' };
+
+  var currentAssignments = getAssignments();
+  var fillerCells = getFillerCells();
+  var seatMap = {};
+  currentAssignments.forEach(function (a) {
+    if (a.roomName === roomName) seatMap[a.row + ',' + a.column] = true;
+  });
+  fillerCells.forEach(function (f) {
+    if (f.roomName === roomName) seatMap[f.row + ',' + f.column] = true;
+  });
+
+  var sheet = getOrCreateSheet_('Assignments');
+  var placed = 0;
+  group.studentIds.forEach(function (sid) {
+    if (!sid) return;
+    removeAssignmentsForStudent_(sid);
+    for (var r = 1; r <= room.rows; r++) {
+      for (var c = 1; c <= room.columns; c++) {
+        var key = r + ',' + c;
+        if (!seatMap[key]) {
+          seatMap[key] = true;
+          sheet.appendRow([sid, roomName, r, c]);
+          placed++;
+          return;
+        }
+      }
+    }
+  });
+  return { success: true, message: placed + ' student(s) placed in ' + roomName + '.' };
+}
+
+// ---------------------------------------------------------------------------
+// School Templates
+// ---------------------------------------------------------------------------
+
+function getTemplates() {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Templates');
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var templates = [];
+  for (var i = 1; i < data.length; i++) {
+    templates.push({ templateName: String(data[i][0]), data: JSON.parse(data[i][1] || '{}') });
+  }
+  return templates;
+}
+
+function saveTemplate(templateName) {
+  ensureSheets_();
+  var teachers = getTeachers();
+  var rooms = getRooms();
+  var payload = JSON.stringify({ teachers: teachers, rooms: rooms });
+  var sheet = getOrCreateSheet_('Templates');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === templateName) {
+      sheet.getRange(i + 1, 2).setValue(payload);
+      return { success: true, message: 'Template "' + templateName + '" updated.' };
+    }
+  }
+  sheet.appendRow([templateName, payload]);
+  return { success: true, message: 'Template "' + templateName + '" saved.' };
+}
+
+function loadTemplate(templateName) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Templates');
+  var data = sheet.getDataRange().getValues();
+  var payload = null;
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === templateName) { payload = JSON.parse(data[i][1] || '{}'); break; }
+  }
+  if (!payload) return { success: false, message: 'Template not found.' };
+
+  var tSheet = getOrCreateSheet_('Teachers');
+  if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+  (payload.teachers || []).forEach(function (t) {
+    tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
+  });
+
+  var rSheet = getOrCreateSheet_('Rooms');
+  if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+  (payload.rooms || []).forEach(function (r) {
+    rSheet.appendRow([
+      r.roomName, r.roomNumber || '', r.hallway || '',
+      r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
+      r.teacherId || '', r.grade || '', r.floor || '1'
+    ]);
+  });
+  return { success: true, message: 'Template "' + templateName + '" loaded.' };
+}
+
+function deleteTemplate(templateName) {
+  var sheet = getOrCreateSheet_('Templates');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === templateName) { sheet.deleteRow(i + 1); break; }
+  }
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Auto-Suggest (grade-aware, filler-aware)
+// ---------------------------------------------------------------------------
+
+function generateRecommendations(smallGroupLimit, gradeFilter) {
+  smallGroupLimit = parseInt(smallGroupLimit, 10) || 10;
+  var students = getStudents();
+  var rooms = getRooms();
+  var fillerCells = getFillerCells();
+
+  if (gradeFilter) {
+    students = students.filter(function (s) { return s.grade === gradeFilter; });
+    rooms = rooms.filter(function (r) { return !r.grade || r.grade === gradeFilter || r.grade === ''; });
+  }
+
+  if (!students.length || !rooms.length) {
+    return { error: 'Need at least one student and one room' + (gradeFilter ? ' for grade ' + gradeFilter : '') + '.' };
+  }
+
+  // Build filler lookup
+  var fillerMap = {};
+  fillerCells.forEach(function (f) {
+    if (!fillerMap[f.roomName]) fillerMap[f.roomName] = {};
+    fillerMap[f.roomName][f.row + ',' + f.column] = true;
+  });
+
+  rooms.sort(function (a, b) { return (a.rows * a.columns) - (b.rows * b.columns); });
+
+  var oneToOne = [], readAloud = [], smallGroup = [], general = [], proximityIds = [];
+  students.forEach(function (s) {
+    if (s.oneToOne) oneToOne.push(s);
+    else if (s.readAloud) readAloud.push(s);
+    else if (s.smallGroup) smallGroup.push(s);
+    else general.push(s);
+    if (s.proximity && !s.oneToOne) proximityIds.push(s.studentId);
+  });
+
+  var assignments = [];
+  var usedSeats = {}, roomStudentCount = {};
+  rooms.forEach(function (r) { usedSeats[r.roomName] = {}; roomStudentCount[r.roomName] = 0; });
+
+  function placeStudent(student, roomName) {
+    var room = rooms.filter(function (r) { return r.roomName === roomName; })[0];
+    if (!room) return false;
+    for (var r = 1; r <= room.rows; r++) {
+      for (var c = 1; c <= room.columns; c++) {
+        var key = r + ',' + c;
+        if (usedSeats[roomName][key]) continue;
+        if (fillerMap[roomName] && fillerMap[roomName][key]) continue;
+        usedSeats[roomName][key] = true;
+        roomStudentCount[roomName]++;
+        assignments.push({ studentId: student.studentId, roomName: roomName, row: r, column: c });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  var roomIndex = 0;
+
+  oneToOne.forEach(function (s) {
+    while (roomIndex < rooms.length && roomStudentCount[rooms[roomIndex].roomName] > 0) roomIndex++;
+    if (roomIndex < rooms.length) { placeStudent(s, rooms[roomIndex].roomName); roomIndex++; }
+  });
+
+  if (readAloud.length) {
+    var raIdx = roomIndex;
+    readAloud.forEach(function (s) {
+      if (raIdx >= rooms.length) return;
+      var room = rooms[raIdx];
+      var fillerCount = fillerMap[room.roomName] ? Object.keys(fillerMap[room.roomName]).length : 0;
+      var cap = room.rows * room.columns - fillerCount;
+      if (roomStudentCount[room.roomName] >= cap) { raIdx++; if (raIdx >= rooms.length) return; }
+      placeStudent(s, rooms[raIdx].roomName);
+    });
+    if (raIdx >= roomIndex) roomIndex = raIdx;
+  }
+
+  if (smallGroup.length) {
+    var sgIdx = roomIndex < rooms.length ? roomIndex : rooms.length - 1;
+    smallGroup.forEach(function (s) {
+      if (sgIdx >= rooms.length) return;
+      var room = rooms[sgIdx];
+      var fillerCount = fillerMap[room.roomName] ? Object.keys(fillerMap[room.roomName]).length : 0;
+      var cap = Math.min(room.rows * room.columns - fillerCount, smallGroupLimit);
+      if (roomStudentCount[room.roomName] >= cap) { sgIdx++; if (sgIdx >= rooms.length) return; }
+      placeStudent(s, rooms[sgIdx].roomName);
+    });
+    if (sgIdx >= roomIndex) roomIndex = sgIdx;
+  }
+
+  general.forEach(function (s) {
+    for (var ri = 0; ri < rooms.length; ri++) {
+      var room = rooms[ri];
+      var fillerCount = fillerMap[room.roomName] ? Object.keys(fillerMap[room.roomName]).length : 0;
+      var cap = room.rows * room.columns - fillerCount;
+      if (roomStudentCount[room.roomName] < cap) { if (placeStudent(s, room.roomName)) break; }
+    }
+  });
+
+  return assignments;
+}
+
+function applyRecommendations(assignments) {
+  ensureSheets_();
+  var sheet = getOrCreateSheet_('Assignments');
+  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+  assignments.forEach(function (a) { sheet.appendRow([a.studentId, a.roomName, a.row, a.column]); });
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Finalize / Export Layout to Sheets
+// ---------------------------------------------------------------------------
+
+function finalizeLayout() {
+  ensureSheets_();
+  var students = getStudents();
+  var rooms = getRooms();
+  var teachers = getTeachers();
+  var assignments = getAssignments();
+  var fillerCells = getFillerCells();
+  var ss = getSpreadsheet_();
+
+  var studentMap = {};
+  students.forEach(function (s) { studentMap[s.studentId] = s; });
+  var teacherMap = {};
+  teachers.forEach(function (t) { teacherMap[t.teacherId] = t; });
+  var fillerMap = {};
+  fillerCells.forEach(function (f) {
+    if (!fillerMap[f.roomName]) fillerMap[f.roomName] = {};
+    fillerMap[f.roomName][f.row + ',' + f.column] = true;
+  });
+
+  rooms.forEach(function (room) {
+    var sheetName = 'Layout - ' + room.roomName;
+    var existing = ss.getSheetByName(sheetName);
+    if (existing) ss.deleteSheet(existing);
+    var layoutSheet = ss.insertSheet(sheetName);
+
+    var grid = [];
+    for (var r = 0; r < room.rows; r++) {
+      var row = [];
+      for (var c = 0; c < room.columns; c++) {
+        var key = (r + 1) + ',' + (c + 1);
+        if (fillerMap[room.roomName] && fillerMap[room.roomName][key]) {
+          row.push('[BLOCKED]');
+        } else {
+          row.push('');
+        }
+      }
+      grid.push(row);
+    }
+
+    assignments.forEach(function (a) {
+      if (a.roomName !== room.roomName) return;
+      var s = studentMap[a.studentId];
+      if (!s) return;
+      var codes = buildAccommodationCodes_(s);
+      var label = s.name;
+      if (codes) label += ' (' + codes + ')';
+      var ri = a.row - 1, ci = a.column - 1;
+      if (ri >= 0 && ri < room.rows && ci >= 0 && ci < room.columns) grid[ri][ci] = label;
+    });
+
+    if (room.rows > 0 && room.columns > 0) {
+      layoutSheet.getRange(1, 1, room.rows, room.columns).setValues(grid);
+      // Color Read Aloud students red
+      for (var r = 0; r < room.rows; r++) {
+        for (var c = 0; c < room.columns; c++) {
+          if (grid[r][c] && grid[r][c].indexOf('RA') !== -1) {
+            layoutSheet.getRange(r + 1, c + 1).setFontColor('#cc0000').setFontWeight('bold');
+          }
+          if (grid[r][c] === '[BLOCKED]') {
+            layoutSheet.getRange(r + 1, c + 1).setBackground('#d1d5db');
+          }
+        }
+      }
+    }
+
+    layoutSheet.insertRowBefore(1);
+    var teacher = teacherMap[room.teacherId];
+    var title = room.roomName;
+    if (room.roomNumber) title += ' (Rm ' + room.roomNumber + ')';
+    if (room.hallway) title += ' — ' + room.hallway;
+    if (room.floor) title += ' — Floor ' + room.floor;
+    if (teacher) title += ' — ' + teacher.name;
+    layoutSheet.getRange(1, 1).setValue(title);
+    layoutSheet.getRange(1, 1).setFontWeight('bold').setFontSize(12).setFontColor('#4a1d96');
+
+    layoutSheet.insertRowAfter(1);
+    layoutSheet.getRange(2, 1).setValue('[ PROCTOR STATION — Row 1 ]');
+    layoutSheet.getRange(2, 1).setFontStyle('italic');
+  });
+
+  return { success: true, message: 'Layout sheets created for ' + rooms.length + ' room(s).' };
+}
+
+// ---------------------------------------------------------------------------
+// Export as HTML (for PDF/Word download in client)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a concise HTML document suitable for printing / saving as PDF or Word.
+ * Read Aloud students are rendered in RED.
+ * Organized by grade -> hallway -> floor -> room.
+ */
+function generateExportHTML() {
+  ensureSheets_();
+  var students = getStudents();
+  var rooms = getRooms();
+  var teachers = getTeachers();
+  var assignments = getAssignments();
+  var fillerCells = getFillerCells();
+
+  var studentMap = {};
+  students.forEach(function (s) { studentMap[s.studentId] = s; });
+  var teacherMap = {};
+  teachers.forEach(function (t) { teacherMap[t.teacherId] = t; });
+  var fillerMap = {};
+  fillerCells.forEach(function (f) {
+    if (!fillerMap[f.roomName]) fillerMap[f.roomName] = {};
+    fillerMap[f.roomName][f.row + ',' + f.column] = true;
+  });
+
+  // Group rooms by grade, then hallway, then floor
+  var gradeOrder = ['6', '7', '8', ''];
+  var roomsByGrade = {};
+  rooms.forEach(function (r) {
+    var g = r.grade || 'Shared';
+    if (!roomsByGrade[g]) roomsByGrade[g] = [];
+    roomsByGrade[g].push(r);
+  });
+
+  var html = [];
+  html.push('<!DOCTYPE html><html><head><meta charset="utf-8">');
+  html.push('<title>KCMS Testing Assignments</title>');
+  html.push('<style>');
+  html.push('body{font-family:Arial,sans-serif;font-size:11px;color:#1f2937;margin:20px;}');
+  html.push('h1{color:#4a1d96;font-size:18px;border-bottom:3px solid #d4a017;padding-bottom:4px;margin-bottom:8px;}');
+  html.push('h2{color:#4a1d96;font-size:14px;margin:12px 0 4px;}');
+  html.push('h3{font-size:12px;margin:8px 0 3px;color:#333;}');
+  html.push('.ra{color:#cc0000;font-weight:bold;}');
+  html.push('table{border-collapse:collapse;width:100%;margin-bottom:10px;}');
+  html.push('td,th{border:1px solid #999;padding:3px 5px;text-align:center;font-size:10px;}');
+  html.push('th{background:#f3e8ff;}');
+  html.push('.blocked{background:#d1d5db;}');
+  html.push('.summary-list{margin:4px 0 10px 16px;font-size:11px;line-height:1.4;}');
+  html.push('.floor-label{background:#f3e8ff;padding:2px 8px;border-radius:3px;font-weight:bold;display:inline-block;margin:6px 0 3px;}');
+  html.push('@media print{h1{page-break-before:avoid;}h2{page-break-before:always;}.no-break{page-break-inside:avoid;}}');
+  html.push('</style></head><body>');
+  html.push('<h1>KCMS SOL Testing Room Assignments</h1>');
+
+  gradeOrder.forEach(function (g) {
+    var gradeKey = g || 'Shared';
+    var gradeRooms = roomsByGrade[gradeKey];
+    if (!gradeRooms || !gradeRooms.length) return;
+
+    var gradeLabel = g ? 'Grade ' + g : 'Shared / Elective Rooms';
+    html.push('<h2>' + gradeLabel + '</h2>');
+
+    // Group by floor
+    var byFloor = {};
+    gradeRooms.forEach(function (r) {
+      var fl = r.floor || '1';
+      if (!byFloor[fl]) byFloor[fl] = [];
+      byFloor[fl].push(r);
+    });
+
+    ['1', '2'].forEach(function (fl) {
+      if (!byFloor[fl]) return;
+      html.push('<span class="floor-label">Floor ' + fl + '</span>');
+
+      byFloor[fl].forEach(function (room) {
+        var teacher = teacherMap[room.teacherId];
+        var roomLabel = room.roomName;
+        if (room.roomNumber) roomLabel += ' (Rm ' + room.roomNumber + ')';
+        if (room.hallway) roomLabel += ' — ' + room.hallway;
+        if (teacher) roomLabel += ' — ' + teacher.name;
+
+        html.push('<div class="no-break">');
+        html.push('<h3>' + roomLabel + '</h3>');
+
+        // Grid table
+        var roomAssign = assignments.filter(function (a) { return a.roomName === room.roomName; });
+        var seatMap = {};
+        roomAssign.forEach(function (a) { seatMap[a.row + ',' + a.column] = a; });
+
+        html.push('<table>');
+        for (var r = 1; r <= room.rows; r++) {
+          html.push('<tr>');
+          for (var c = 1; c <= room.columns; c++) {
+            var key = r + ',' + c;
+            if (fillerMap[room.roomName] && fillerMap[room.roomName][key]) {
+              html.push('<td class="blocked"></td>');
+            } else if (seatMap[key]) {
+              var s = studentMap[seatMap[key].studentId];
+              if (s) {
+                var isRA = s.readAloud;
+                var codes = buildAccommodationCodes_(s);
+                var cellText = s.name;
+                if (codes) cellText += ' (' + codes + ')';
+                html.push('<td' + (isRA ? ' class="ra"' : '') + '>' + cellText + '</td>');
+              } else {
+                html.push('<td></td>');
+              }
+            } else {
+              html.push('<td></td>');
+            }
+          }
+          html.push('</tr>');
+        }
+        html.push('</table>');
+
+        // Text summary for this room
+        if (roomAssign.length) {
+          html.push('<div class="summary-list">');
+          roomAssign.forEach(function (a) {
+            var s = studentMap[a.studentId];
+            if (!s) return;
+            var isRA = s.readAloud;
+            var codes = buildAccommodationCodes_(s);
+            var line = s.name + ' (Gr ' + s.grade + ')';
+            if (codes) line += ' — ' + codes;
+            line += ' → Seat R' + a.row + 'C' + a.column;
+            if (isRA) {
+              html.push('<div class="ra">' + line + '</div>');
+            } else {
+              html.push('<div>' + line + '</div>');
+            }
+          });
+          html.push('</div>');
+        }
+
+        html.push('</div>');
+      });
+    });
+  });
+
+  html.push('</body></html>');
+  return html.join('\n');
+}
+
+function buildAccommodationCodes_(student) {
+  var codes = [];
+  if (student.smallGroup) codes.push('SG');
+  if (student.readAloud) codes.push('RA');
+  if (student.oneToOne) codes.push('1:1');
+  if (student.proximity) codes.push('PROX');
+  if (student.prompting) codes.push('PMPT');
+  if (student.otherAccommodations) codes.push(student.otherAccommodations);
+  return codes.join(', ');
+}
