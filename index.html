@@ -8,7 +8,10 @@
 
 <!-- ===== Top Navigation ===== -->
 <header class="top-bar">
-  <h1 class="top-bar__title">VDOE Testing Coordinator</h1>
+  <div class="top-bar__brand">
+    <span class="kcms-logo">KCMS</span>
+    <h1 class="top-bar__title">Testing Coordinator</h1>
+  </div>
   <nav class="top-bar__nav">
     <button class="nav-btn active" data-view="students">Students</button>
     <button class="nav-btn" data-view="teachers">Teachers</button>
@@ -19,16 +22,21 @@
   </nav>
 </header>
 
-<!-- ===== Grade Switcher (visible globally) ===== -->
+<!-- ===== Grade Switcher ===== -->
 <div class="grade-switcher">
   <span class="grade-switcher__label">Grade:</span>
   <button class="grade-btn active" data-grade="">All</button>
   <button class="grade-btn" data-grade="6">6th</button>
   <button class="grade-btn" data-grade="7">7th</button>
   <button class="grade-btn" data-grade="8">8th</button>
+  <span class="grade-switcher__sep"></span>
+  <span class="grade-switcher__label">Floor:</span>
+  <button class="floor-btn active" data-floor="">Both</button>
+  <button class="floor-btn" data-floor="1">1st</button>
+  <button class="floor-btn" data-floor="2">2nd</button>
 </div>
 
-<!-- ===== Toast / Notifications ===== -->
+<!-- ===== Toast ===== -->
 <div id="toast" class="toast hidden"></div>
 
 <!-- ===== Loading Overlay ===== -->
@@ -80,7 +88,6 @@
           </select>
         </label>
       </div>
-
       <fieldset class="form-row">
         <legend>Accommodations</legend>
         <label class="cb"><input type="checkbox" id="sf-smallgroup"> Small Group</label>
@@ -89,18 +96,15 @@
         <label class="cb"><input type="checkbox" id="sf-proximity"> Proximity to Proctor</label>
         <label class="cb"><input type="checkbox" id="sf-prompting"> Prompting</label>
       </fieldset>
-
       <div class="form-row">
         <label>Other Accommodations<input type="text" id="sf-other" placeholder="e.g. Extended Time"></label>
       </div>
-
       <div class="form-actions">
         <button type="submit" class="btn btn--primary" id="sf-submit-btn">Add Student</button>
         <button type="button" class="btn btn--secondary" id="sf-cancel-btn" style="display:none">Cancel Edit</button>
       </div>
     </form>
   </div>
-
   <div class="card">
     <h2>Student Roster <span id="roster-count" class="count-badge"></span></h2>
     <div class="filter-bar">
@@ -117,11 +121,7 @@
     </div>
     <div class="table-wrap">
       <table id="student-table">
-        <thead>
-          <tr>
-            <th>ID</th><th>Name</th><th>Gr</th><th>Accommodations</th><th>Actions</th>
-          </tr>
-        </thead>
+        <thead><tr><th>ID</th><th>Name</th><th>Gr</th><th>Accommodations</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -157,16 +157,11 @@
       </div>
     </form>
   </div>
-
   <div class="card">
     <h2>Teacher Roster <span id="teacher-count" class="count-badge"></span></h2>
     <div class="table-wrap">
       <table id="teacher-table">
-        <thead>
-          <tr>
-            <th>ID</th><th>Name</th><th>Room #</th><th>Hallway</th><th>Grade</th><th>Actions</th>
-          </tr>
-        </thead>
+        <thead><tr><th>ID</th><th>Name</th><th>Room #</th><th>Hallway</th><th>Grade</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -202,13 +197,18 @@
             <option value="8">8</option>
           </select>
         </label>
+        <label>Floor
+          <select id="rf-floor">
+            <option value="1">1st Floor</option>
+            <option value="2">2nd Floor</option>
+          </select>
+        </label>
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn--primary">Add Room</button>
       </div>
     </form>
   </div>
-
   <div class="card">
     <h2>Rooms <span id="room-count" class="count-badge"></span></h2>
     <div id="room-list" class="room-cards"></div>
@@ -220,7 +220,6 @@
 <!-- ============================================================ -->
 <section id="view-staging" class="view hidden">
   <div class="staging-layout">
-    <!-- Left: Students available to stage -->
     <div class="panel panel--students card">
       <h2>Available Students</h2>
       <div class="filter-bar">
@@ -237,8 +236,6 @@
       </div>
       <ul id="staging-student-list" class="student-list"></ul>
     </div>
-
-    <!-- Right: Staging groups -->
     <div class="panel panel--staging card">
       <div class="staging-toolbar">
         <h2>Staging Groups</h2>
@@ -257,8 +254,6 @@
 <!-- ============================================================ -->
 <section id="view-assign" class="view hidden">
   <div class="assign-layout">
-
-    <!-- Left Panel — Unassigned Students -->
     <div class="panel panel--students card">
       <h2>Unassigned Students</h2>
       <div class="filter-bar">
@@ -275,8 +270,6 @@
       </div>
       <ul id="unassigned-list" class="student-list"></ul>
     </div>
-
-    <!-- Right Panel — Room Grids -->
     <div class="panel panel--grid card">
       <div class="grid-toolbar">
         <label>Room:
@@ -286,12 +279,16 @@
         <label>SG Limit:
           <input type="number" id="sg-limit" value="10" min="1" max="30" style="width:60px">
         </label>
-        <button class="btn btn--primary" id="btn-finalize">Finalize Layout</button>
+        <label class="cb filler-toggle"><input type="checkbox" id="filler-mode"> Filler Mode</label>
+        <button class="btn btn--primary" id="btn-finalize">Finalize</button>
+        <button class="btn btn--gold" id="btn-export-pdf">Export PDF</button>
+        <button class="btn btn--gold" id="btn-export-word">Export Word</button>
       </div>
       <div id="grid-room-info" class="room-info-bar"></div>
       <div class="proctor-label">PROCTOR STATION (Row 1)</div>
       <div id="grid-container" class="grid-container"></div>
       <div id="grid-warnings" class="warnings"></div>
+      <p class="muted" style="margin-top:.5rem">Filler Mode: check the toggle, then click empty cells to block/unblock them. Right-click occupied cells to unassign.</p>
     </div>
   </div>
 </section>

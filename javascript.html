@@ -3,16 +3,13 @@
 // State
 // =========================================================================
 var APP = {
-  students: [],
-  teachers: [],
-  rooms: [],
-  assignments: [],
-  stagingGroups: [],
-  templates: [],
-  editingStudentId: null,
-  editingTeacherId: null,
+  students: [], teachers: [], rooms: [], assignments: [],
+  stagingGroups: [], templates: [], fillerCells: [],
+  editingStudentId: null, editingTeacherId: null,
   selectedRoom: null,
-  gradeFilter: ''       // global grade filter: '' | '6' | '7' | '8'
+  gradeFilter: '',
+  floorFilter: '',
+  fillerMode: false
 };
 
 // =========================================================================
@@ -20,6 +17,7 @@ var APP = {
 // =========================================================================
 document.addEventListener('DOMContentLoaded', function () {
   initGradeSwitcher();
+  initFloorSwitcher();
   initNav();
   initStudentForm();
   initTeacherForm();
@@ -33,46 +31,24 @@ document.addEventListener('DOMContentLoaded', function () {
 
 function refreshAll() {
   showLoading(true);
-  var pending = 6;
+  var pending = 7;
   function done() { pending--; if (pending <= 0) { renderAll(); showLoading(false); } }
-
-  google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading students: ' + e.message); done(); })
-    .getStudents();
-
-  google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading teachers: ' + e.message); done(); })
-    .getTeachers();
-
-  google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading rooms: ' + e.message); done(); })
-    .getRooms();
-
-  google.script.run.withSuccessHandler(function (d) { APP.assignments = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading assignments: ' + e.message); done(); })
-    .getAssignments();
-
-  google.script.run.withSuccessHandler(function (d) { APP.stagingGroups = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading staging: ' + e.message); done(); })
-    .getStagingGroups();
-
-  google.script.run.withSuccessHandler(function (d) { APP.templates = d || []; done(); })
-    .withFailureHandler(function (e) { toast('Error loading templates: ' + e.message); done(); })
-    .getTemplates();
+  google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); }).withFailureHandler(function () { done(); }).getStudents();
+  google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); }).withFailureHandler(function () { done(); }).getTeachers();
+  google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); }).withFailureHandler(function () { done(); }).getRooms();
+  google.script.run.withSuccessHandler(function (d) { APP.assignments = d || []; done(); }).withFailureHandler(function () { done(); }).getAssignments();
+  google.script.run.withSuccessHandler(function (d) { APP.stagingGroups = d || []; done(); }).withFailureHandler(function () { done(); }).getStagingGroups();
+  google.script.run.withSuccessHandler(function (d) { APP.templates = d || []; done(); }).withFailureHandler(function () { done(); }).getTemplates();
+  google.script.run.withSuccessHandler(function (d) { APP.fillerCells = d || []; done(); }).withFailureHandler(function () { done(); }).getFillerCells();
 }
 
 function renderAll() {
-  renderStudentTable();
-  renderTeacherTable();
-  renderRoomList();
-  populateTeacherDropdown();
-  renderStagingView();
-  renderAssignView();
-  renderTemplateList();
+  renderStudentTable(); renderTeacherTable(); renderRoomList();
+  populateTeacherDropdown(); renderStagingView(); renderAssignView(); renderTemplateList();
 }
 
 // =========================================================================
-// Global Grade Switcher
+// Grade & Floor Switchers
 // =========================================================================
 function initGradeSwitcher() {
   document.querySelectorAll('.grade-btn').forEach(function (btn) {
@@ -85,19 +61,42 @@ function initGradeSwitcher() {
   });
 }
 
-/** Filter array by the global grade setting. Works for students, teachers, rooms. */
+function initFloorSwitcher() {
+  document.querySelectorAll('.floor-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.floor-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      APP.floorFilter = btn.dataset.floor;
+      renderAll();
+    });
+  });
+}
+
 function filterByGrade(arr, gradeKey) {
   gradeKey = gradeKey || 'grade';
   if (!APP.gradeFilter) return arr;
-  return arr.filter(function (item) {
-    var g = item[gradeKey];
-    return !g || g === APP.gradeFilter;
-  });
+  return arr.filter(function (item) { var g = item[gradeKey]; return !g || g === APP.gradeFilter; });
+}
+
+function filterByFloor(arr) {
+  if (!APP.floorFilter) return arr;
+  return arr.filter(function (item) { return !item.floor || item.floor === APP.floorFilter; });
+}
+
+function filterRooms(arr) {
+  var result = filterByGrade(arr);
+  return filterByFloor(result);
 }
 
 function filterStudentsByGrade(arr) {
   if (!APP.gradeFilter) return arr;
   return arr.filter(function (s) { return s.grade === APP.gradeFilter; });
+}
+
+function isFillerCell(roomName, row, col) {
+  return APP.fillerCells.some(function (f) {
+    return f.roomName === roomName && f.row === row && f.column === col;
+  });
 }
 
 // =========================================================================
@@ -127,9 +126,7 @@ function initAccomModal() {
     var s = APP.students.find(function (x) { return x.studentId === sid; });
     if (!s) return;
     var data = {
-      studentId: sid,
-      name: s.name,
-      grade: s.grade,
+      studentId: sid, name: s.name, grade: s.grade,
       smallGroup: document.getElementById('am-smallgroup').checked,
       readAloud: document.getElementById('am-readaloud').checked,
       oneToOne: document.getElementById('am-onetoone').checked,
@@ -138,11 +135,8 @@ function initAccomModal() {
       otherAccommodations: document.getElementById('am-other').value.trim()
     };
     showLoading(true);
-    google.script.run.withSuccessHandler(function () {
-      closeAccomModal();
-      refreshAll();
-      toast('Accommodations updated');
-    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+    google.script.run.withSuccessHandler(function () { closeAccomModal(); refreshAll(); toast('Accommodations updated'); })
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
       .updateStudent(data);
   });
 }
@@ -161,9 +155,7 @@ function openAccomModal(studentId) {
   document.getElementById('accom-modal').classList.remove('hidden');
 }
 
-function closeAccomModal() {
-  document.getElementById('accom-modal').classList.add('hidden');
-}
+function closeAccomModal() { document.getElementById('accom-modal').classList.add('hidden'); }
 
 // =========================================================================
 // Student Form
@@ -176,36 +168,23 @@ function initStudentForm() {
     showLoading(true);
     if (APP.editingStudentId) {
       google.script.run.withSuccessHandler(function () { APP.editingStudentId = null; resetStudentForm(); refreshAll(); toast('Student updated'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-        .updateStudent(data);
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).updateStudent(data);
     } else {
-      if (APP.students.some(function (s) { return s.studentId === data.studentId; })) {
-        toast('Duplicate Student ID'); showLoading(false); return;
-      }
+      if (APP.students.some(function (s) { return s.studentId === data.studentId; })) { toast('Duplicate Student ID'); showLoading(false); return; }
       google.script.run.withSuccessHandler(function () { resetStudentForm(); refreshAll(); toast('Student added'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-        .addStudent(data);
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addStudent(data);
     }
   });
-
-  document.getElementById('sf-cancel-btn').addEventListener('click', function () {
-    APP.editingStudentId = null;
-    resetStudentForm();
-  });
-
+  document.getElementById('sf-cancel-btn').addEventListener('click', function () { APP.editingStudentId = null; resetStudentForm(); });
   document.getElementById('roster-acc-filter').addEventListener('change', renderStudentTable);
 }
 
 function readStudentForm() {
   return {
-    studentId: document.getElementById('sf-id').value.trim(),
-    name: document.getElementById('sf-name').value.trim(),
-    grade: document.getElementById('sf-grade').value,
-    smallGroup: document.getElementById('sf-smallgroup').checked,
-    readAloud: document.getElementById('sf-readaloud').checked,
-    oneToOne: document.getElementById('sf-onetoone').checked,
-    proximity: document.getElementById('sf-proximity').checked,
-    prompting: document.getElementById('sf-prompting').checked,
+    studentId: document.getElementById('sf-id').value.trim(), name: document.getElementById('sf-name').value.trim(),
+    grade: document.getElementById('sf-grade').value, smallGroup: document.getElementById('sf-smallgroup').checked,
+    readAloud: document.getElementById('sf-readaloud').checked, oneToOne: document.getElementById('sf-onetoone').checked,
+    proximity: document.getElementById('sf-proximity').checked, prompting: document.getElementById('sf-prompting').checked,
     otherAccommodations: document.getElementById('sf-other').value.trim()
   };
 }
@@ -221,18 +200,12 @@ function editStudent(studentId) {
   var s = APP.students.find(function (x) { return x.studentId === studentId; });
   if (!s) return;
   APP.editingStudentId = studentId;
-  document.getElementById('sf-id').value = s.studentId;
-  document.getElementById('sf-id').disabled = true;
-  document.getElementById('sf-name').value = s.name;
-  document.getElementById('sf-grade').value = s.grade;
-  document.getElementById('sf-smallgroup').checked = s.smallGroup;
-  document.getElementById('sf-readaloud').checked = s.readAloud;
-  document.getElementById('sf-onetoone').checked = s.oneToOne;
-  document.getElementById('sf-proximity').checked = s.proximity;
-  document.getElementById('sf-prompting').checked = s.prompting;
-  document.getElementById('sf-other').value = s.otherAccommodations || '';
-  document.getElementById('sf-submit-btn').textContent = 'Save Changes';
-  document.getElementById('sf-cancel-btn').style.display = '';
+  document.getElementById('sf-id').value = s.studentId; document.getElementById('sf-id').disabled = true;
+  document.getElementById('sf-name').value = s.name; document.getElementById('sf-grade').value = s.grade;
+  document.getElementById('sf-smallgroup').checked = s.smallGroup; document.getElementById('sf-readaloud').checked = s.readAloud;
+  document.getElementById('sf-onetoone').checked = s.oneToOne; document.getElementById('sf-proximity').checked = s.proximity;
+  document.getElementById('sf-prompting').checked = s.prompting; document.getElementById('sf-other').value = s.otherAccommodations || '';
+  document.getElementById('sf-submit-btn').textContent = 'Save Changes'; document.getElementById('sf-cancel-btn').style.display = '';
   document.getElementById('sf-name').focus();
 }
 
@@ -240,35 +213,24 @@ function confirmDeleteStudent(studentId) {
   if (!confirm('Delete student ' + studentId + '?')) return;
   showLoading(true);
   google.script.run.withSuccessHandler(function () { refreshAll(); toast('Student deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .deleteStudent(studentId);
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteStudent(studentId);
 }
 
-// =========================================================================
-// Student Table
-// =========================================================================
 function renderStudentTable() {
   var accF = document.getElementById('roster-acc-filter').value;
   var list = filterStudentsByGrade(APP.students);
   if (accF) list = list.filter(function (s) { return s[accF]; });
-
   document.getElementById('roster-count').textContent = list.length + ' student' + (list.length !== 1 ? 's' : '');
-
   var tbody = document.querySelector('#student-table tbody');
   tbody.innerHTML = '';
   list.forEach(function (s) {
-    var codes = accomBadges(s);
     var tr = document.createElement('tr');
     tr.innerHTML =
-      '<td>' + esc(s.studentId) + '</td>' +
-      '<td>' + esc(s.name) + '</td>' +
-      '<td>' + esc(s.grade) + '</td>' +
-      '<td>' + codes + '</td>' +
-      '<td class="actions">' +
-        '<button class="btn btn--sm btn--secondary" onclick="editStudent(\'' + esc(s.studentId) + '\')">Edit</button> ' +
-        '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
-        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button>' +
-      '</td>';
+      '<td>' + esc(s.studentId) + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.grade) + '</td>' +
+      '<td>' + accomBadges(s) + '</td><td class="actions">' +
+      '<button class="btn btn--sm btn--secondary" onclick="editStudent(\'' + esc(s.studentId) + '\')">Edit</button> ' +
+      '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
+      '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button></td>';
     tbody.appendChild(tr);
   });
 }
@@ -279,55 +241,35 @@ function renderStudentTable() {
 function initTeacherForm() {
   document.getElementById('teacher-form').addEventListener('submit', function (e) {
     e.preventDefault();
-    var data = {
-      teacherId: document.getElementById('tf-id').value.trim(),
-      name: document.getElementById('tf-name').value.trim(),
-      roomNumber: document.getElementById('tf-room').value.trim(),
-      hallway: document.getElementById('tf-hallway').value.trim(),
-      grade: document.getElementById('tf-grade').value
-    };
+    var data = { teacherId: document.getElementById('tf-id').value.trim(), name: document.getElementById('tf-name').value.trim(),
+      roomNumber: document.getElementById('tf-room').value.trim(), hallway: document.getElementById('tf-hallway').value.trim(),
+      grade: document.getElementById('tf-grade').value };
     if (!data.name || !data.teacherId) { toast('Teacher name and ID required'); return; }
     showLoading(true);
-
     if (APP.editingTeacherId) {
       google.script.run.withSuccessHandler(function () { APP.editingTeacherId = null; resetTeacherForm(); refreshAll(); toast('Teacher updated'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-        .updateTeacher(data);
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).updateTeacher(data);
     } else {
-      if (APP.teachers.some(function (t) { return t.teacherId === data.teacherId; })) {
-        toast('Duplicate Teacher ID'); showLoading(false); return;
-      }
+      if (APP.teachers.some(function (t) { return t.teacherId === data.teacherId; })) { toast('Duplicate Teacher ID'); showLoading(false); return; }
       google.script.run.withSuccessHandler(function () { resetTeacherForm(); refreshAll(); toast('Teacher added'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-        .addTeacher(data);
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addTeacher(data);
     }
   });
-
-  document.getElementById('tf-cancel-btn').addEventListener('click', function () {
-    APP.editingTeacherId = null;
-    resetTeacherForm();
-  });
+  document.getElementById('tf-cancel-btn').addEventListener('click', function () { APP.editingTeacherId = null; resetTeacherForm(); });
 }
 
 function resetTeacherForm() {
-  document.getElementById('teacher-form').reset();
-  document.getElementById('tf-id').disabled = false;
-  document.getElementById('tf-submit-btn').textContent = 'Add Teacher';
-  document.getElementById('tf-cancel-btn').style.display = 'none';
+  document.getElementById('teacher-form').reset(); document.getElementById('tf-id').disabled = false;
+  document.getElementById('tf-submit-btn').textContent = 'Add Teacher'; document.getElementById('tf-cancel-btn').style.display = 'none';
 }
 
 function editTeacher(teacherId) {
-  var t = APP.teachers.find(function (x) { return x.teacherId === teacherId; });
-  if (!t) return;
+  var t = APP.teachers.find(function (x) { return x.teacherId === teacherId; }); if (!t) return;
   APP.editingTeacherId = teacherId;
-  document.getElementById('tf-id').value = t.teacherId;
-  document.getElementById('tf-id').disabled = true;
-  document.getElementById('tf-name').value = t.name;
-  document.getElementById('tf-room').value = t.roomNumber;
-  document.getElementById('tf-hallway').value = t.hallway;
-  document.getElementById('tf-grade').value = t.grade;
-  document.getElementById('tf-submit-btn').textContent = 'Save Changes';
-  document.getElementById('tf-cancel-btn').style.display = '';
+  document.getElementById('tf-id').value = t.teacherId; document.getElementById('tf-id').disabled = true;
+  document.getElementById('tf-name').value = t.name; document.getElementById('tf-room').value = t.roomNumber;
+  document.getElementById('tf-hallway').value = t.hallway; document.getElementById('tf-grade').value = t.grade;
+  document.getElementById('tf-submit-btn').textContent = 'Save Changes'; document.getElementById('tf-cancel-btn').style.display = '';
   document.getElementById('tf-name').focus();
 }
 
@@ -335,28 +277,19 @@ function confirmDeleteTeacher(teacherId) {
   if (!confirm('Delete teacher ' + teacherId + '?')) return;
   showLoading(true);
   google.script.run.withSuccessHandler(function () { refreshAll(); toast('Teacher deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .deleteTeacher(teacherId);
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteTeacher(teacherId);
 }
 
 function renderTeacherTable() {
   var list = filterByGrade(APP.teachers);
   document.getElementById('teacher-count').textContent = list.length + ' teacher' + (list.length !== 1 ? 's' : '');
-
-  var tbody = document.querySelector('#teacher-table tbody');
-  tbody.innerHTML = '';
+  var tbody = document.querySelector('#teacher-table tbody'); tbody.innerHTML = '';
   list.forEach(function (t) {
     var tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td>' + esc(t.teacherId) + '</td>' +
-      '<td>' + esc(t.name) + '</td>' +
-      '<td>' + esc(t.roomNumber) + '</td>' +
-      '<td>' + esc(t.hallway) + '</td>' +
-      '<td>' + (t.grade || 'Elective') + '</td>' +
-      '<td class="actions">' +
-        '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
-        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button>' +
-      '</td>';
+    tr.innerHTML = '<td>' + esc(t.teacherId) + '</td><td>' + esc(t.name) + '</td><td>' + esc(t.roomNumber) + '</td>' +
+      '<td>' + esc(t.hallway) + '</td><td>' + (t.grade || 'Elective') + '</td><td class="actions">' +
+      '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
+      '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button></td>';
     tbody.appendChild(tr);
   });
 }
@@ -365,14 +298,11 @@ function renderTeacherTable() {
 // Room Form & List
 // =========================================================================
 function populateTeacherDropdown() {
-  var sel = document.getElementById('rf-teacher');
-  var prev = sel.value;
+  var sel = document.getElementById('rf-teacher'); var prev = sel.value;
   sel.innerHTML = '<option value="">-- None --</option>';
   APP.teachers.forEach(function (t) {
-    var opt = document.createElement('option');
-    opt.value = t.teacherId;
-    opt.textContent = t.name + (t.roomNumber ? ' (Rm ' + t.roomNumber + ')' : '');
-    sel.appendChild(opt);
+    var opt = document.createElement('option'); opt.value = t.teacherId;
+    opt.textContent = t.name + (t.roomNumber ? ' (Rm ' + t.roomNumber + ')' : ''); sel.appendChild(opt);
   });
   if (prev) sel.value = prev;
 }
@@ -381,62 +311,57 @@ function initRoomForm() {
   document.getElementById('room-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var data = {
-      roomName: document.getElementById('rf-name').value.trim(),
-      roomNumber: document.getElementById('rf-number').value.trim(),
-      hallway: document.getElementById('rf-hallway').value.trim(),
-      rows: document.getElementById('rf-rows').value,
-      columns: document.getElementById('rf-cols').value,
-      maxCapacity: document.getElementById('rf-cap').value,
-      teacherId: document.getElementById('rf-teacher').value,
-      grade: document.getElementById('rf-grade').value
+      roomName: document.getElementById('rf-name').value.trim(), roomNumber: document.getElementById('rf-number').value.trim(),
+      hallway: document.getElementById('rf-hallway').value.trim(), rows: document.getElementById('rf-rows').value,
+      columns: document.getElementById('rf-cols').value, maxCapacity: document.getElementById('rf-cap').value,
+      teacherId: document.getElementById('rf-teacher').value, grade: document.getElementById('rf-grade').value,
+      floor: document.getElementById('rf-floor').value
     };
     if (!data.roomName) { toast('Room label required'); return; }
     if (APP.rooms.some(function (r) { return r.roomName === data.roomName; })) { toast('Duplicate room name'); return; }
     showLoading(true);
     google.script.run.withSuccessHandler(function () { document.getElementById('room-form').reset(); refreshAll(); toast('Room added'); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-      .addRoom(data);
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addRoom(data);
   });
 }
 
 function renderRoomList() {
-  var container = document.getElementById('room-list');
-  container.innerHTML = '';
-  var list = filterByGrade(APP.rooms);
+  var container = document.getElementById('room-list'); container.innerHTML = '';
+  var list = filterRooms(APP.rooms);
   document.getElementById('room-count').textContent = list.length + ' room' + (list.length !== 1 ? 's' : '');
-
   if (!list.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
 
-  // Group by hallway
-  var hallways = {};
-  list.forEach(function (r) {
-    var hw = r.hallway || 'Other';
-    if (!hallways[hw]) hallways[hw] = [];
-    hallways[hw].push(r);
-  });
+  // Group by floor, then hallway
+  var byFloor = {};
+  list.forEach(function (r) { var fl = r.floor || '1'; if (!byFloor[fl]) byFloor[fl] = []; byFloor[fl].push(r); });
 
-  Object.keys(hallways).sort().forEach(function (hw) {
-    var section = document.createElement('div');
-    section.className = 'hallway-section';
-    section.innerHTML = '<h3 class="hallway-header">' + esc(hw) + '</h3>';
-    var grid = document.createElement('div');
-    grid.className = 'room-cards';
+  ['1', '2'].forEach(function (fl) {
+    if (!byFloor[fl]) return;
+    var floorDiv = document.createElement('div');
+    floorDiv.innerHTML = '<h3 class="floor-header">Floor ' + fl + '</h3>';
 
-    hallways[hw].forEach(function (r) {
-      var teacher = APP.teachers.find(function (t) { return t.teacherId === r.teacherId; });
-      var div = document.createElement('div');
-      div.className = 'room-card';
-      var cap = r.maxCapacity || (r.rows * r.columns);
-      div.innerHTML =
-        '<h3>' + esc(r.roomName) + (r.roomNumber ? ' <span class="room-num">Rm ' + esc(r.roomNumber) + '</span>' : '') + '</h3>' +
-        '<p>' + r.rows + ' rows &times; ' + r.columns + ' cols &mdash; cap ' + cap + '</p>' +
-        (teacher ? '<p class="room-teacher">' + esc(teacher.name) + '</p>' : '') +
-        (r.grade ? '<span class="badge badge--grade">Grade ' + esc(r.grade) + '</span> ' : '') +
-        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
-      grid.appendChild(div);
+    var hallways = {};
+    byFloor[fl].forEach(function (r) { var hw = r.hallway || 'Other'; if (!hallways[hw]) hallways[hw] = []; hallways[hw].push(r); });
+
+    Object.keys(hallways).sort().forEach(function (hw) {
+      var section = document.createElement('div'); section.className = 'hallway-section';
+      section.innerHTML = '<h4 class="hallway-header">' + esc(hw) + '</h4>';
+      var grid = document.createElement('div'); grid.className = 'room-cards';
+      hallways[hw].forEach(function (r) {
+        var teacher = APP.teachers.find(function (t) { return t.teacherId === r.teacherId; });
+        var div = document.createElement('div'); div.className = 'room-card';
+        var cap = r.maxCapacity || (r.rows * r.columns);
+        div.innerHTML = '<h3>' + esc(r.roomName) + (r.roomNumber ? ' <span class="room-num">Rm ' + esc(r.roomNumber) + '</span>' : '') + '</h3>' +
+          '<p>' + r.rows + ' &times; ' + r.columns + ' &mdash; cap ' + cap + '</p>' +
+          (teacher ? '<p class="room-teacher">' + esc(teacher.name) + '</p>' : '') +
+          (r.grade ? '<span class="badge badge--grade">Gr ' + esc(r.grade) + '</span> ' : '') +
+          '<span class="badge badge--floor">F' + esc(r.floor || '1') + '</span> ' +
+          '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
+        grid.appendChild(div);
+      });
+      section.appendChild(grid); floorDiv.appendChild(section);
     });
-    section.appendChild(grid);
-    container.appendChild(section);
+    container.appendChild(floorDiv);
   });
 }
 
@@ -444,8 +369,7 @@ function confirmDeleteRoom(name) {
   if (!confirm('Delete room "' + name + '" and its assignments?')) return;
   showLoading(true);
   google.script.run.withSuccessHandler(function () { refreshAll(); toast('Room deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .deleteRoom(name);
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteRoom(name);
 }
 
 // =========================================================================
@@ -456,247 +380,146 @@ function initStagingView() {
     var name = document.getElementById('new-group-name').value.trim();
     if (!name) { toast('Enter a group name'); return; }
     showLoading(true);
-    google.script.run.withSuccessHandler(function (res) {
-      document.getElementById('new-group-name').value = '';
-      refreshAll();
-      toast('Group created');
-    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-      .createStagingGroup(name);
+    google.script.run.withSuccessHandler(function () { document.getElementById('new-group-name').value = ''; refreshAll(); toast('Group created'); })
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).createStagingGroup(name);
   });
-
   document.getElementById('staging-acc-filter').addEventListener('change', renderStagingView);
 }
 
-function renderStagingView() {
-  renderStagingStudentList();
-  renderStagingGroups();
-}
+function renderStagingView() { renderStagingStudentList(); renderStagingGroups(); }
 
 function renderStagingStudentList() {
   var accF = document.getElementById('staging-acc-filter').value;
-  // Show students not yet in any staging group
   var stagedIds = {};
-  APP.stagingGroups.forEach(function (g) {
-    g.studentIds.forEach(function (sid) { stagedIds[sid] = true; });
-  });
-
+  APP.stagingGroups.forEach(function (g) { g.studentIds.forEach(function (sid) { stagedIds[sid] = true; }); });
   var list = filterStudentsByGrade(APP.students).filter(function (s) {
-    if (stagedIds[s.studentId]) return false;
-    if (accF && !s[accF]) return false;
-    return true;
+    if (stagedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
   });
-
-  var ul = document.getElementById('staging-student-list');
-  ul.innerHTML = '';
+  var ul = document.getElementById('staging-student-list'); ul.innerHTML = '';
   if (!list.length) { ul.innerHTML = '<li class="muted">No available students.</li>'; return; }
-
   list.forEach(function (s) {
-    var li = document.createElement('li');
-    li.className = 'student-chip';
-    li.setAttribute('draggable', 'true');
+    var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
     li.dataset.studentId = s.studentId;
     li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>';
-
-    li.addEventListener('dragstart', function (e) {
-      e.dataTransfer.setData('text/plain', 'stage:' + s.studentId);
-      li.classList.add('dragging');
-    });
+    li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', 'stage:' + s.studentId); li.classList.add('dragging'); });
     li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
     ul.appendChild(li);
   });
 }
 
 function renderStagingGroups() {
-  var container = document.getElementById('staging-groups-container');
-  container.innerHTML = '';
-
-  if (!APP.stagingGroups.length) {
-    container.innerHTML = '<p class="muted">No staging groups yet. Create one above.</p>';
-    return;
-  }
-
+  var container = document.getElementById('staging-groups-container'); container.innerHTML = '';
+  if (!APP.stagingGroups.length) { container.innerHTML = '<p class="muted">No staging groups yet. Create one above.</p>'; return; }
   APP.stagingGroups.forEach(function (group) {
-    var div = document.createElement('div');
-    div.className = 'staging-group';
-
+    var div = document.createElement('div'); div.className = 'staging-group';
     var memberCount = group.studentIds.filter(function (id) { return id; }).length;
-    var header = document.createElement('div');
-    header.className = 'staging-group__header';
-    header.innerHTML =
-      '<h3>' + esc(group.groupName) + ' <span class="count-badge">' + memberCount + '</span></h3>' +
-      '<div class="staging-group__actions">' +
-        '<select class="staging-room-select" data-group-id="' + esc(group.groupId) + '">' +
-          '<option value="">Place in room...</option>' +
-        '</select>' +
-        '<button class="btn btn--sm btn--accent btn-place-group" data-group-id="' + esc(group.groupId) + '">Place</button> ' +
-        '<button class="btn btn--sm btn--danger btn-delete-group" data-group-id="' + esc(group.groupId) + '">Delete</button>' +
-      '</div>';
+    var header = document.createElement('div'); header.className = 'staging-group__header';
+    header.innerHTML = '<h3>' + esc(group.groupName) + ' <span class="count-badge">' + memberCount + '</span></h3>' +
+      '<div class="staging-group__actions"><select class="staging-room-select" data-group-id="' + esc(group.groupId) + '"><option value="">Place in room...</option></select>' +
+      '<button class="btn btn--sm btn--accent btn-place-group" data-group-id="' + esc(group.groupId) + '">Place</button> ' +
+      '<button class="btn btn--sm btn--danger btn-delete-group" data-group-id="' + esc(group.groupId) + '">Delete</button></div>';
     div.appendChild(header);
-
-    // Room dropdown for this group
     var roomSel = header.querySelector('.staging-room-select');
-    var filteredRooms = filterByGrade(APP.rooms);
-    filteredRooms.forEach(function (r) {
-      var opt = document.createElement('option');
-      opt.value = r.roomName;
-      opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : '');
-      roomSel.appendChild(opt);
+    filterRooms(APP.rooms).forEach(function (r) {
+      var opt = document.createElement('option'); opt.value = r.roomName;
+      opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : ''); roomSel.appendChild(opt);
     });
-
-    // Drop zone for students
-    var dropZone = document.createElement('div');
-    dropZone.className = 'staging-group__members';
-    dropZone.dataset.groupId = group.groupId;
-
+    var dropZone = document.createElement('div'); dropZone.className = 'staging-group__members'; dropZone.dataset.groupId = group.groupId;
     dropZone.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
     dropZone.addEventListener('drop', function (e) {
-      e.preventDefault();
-      this.classList.remove('drag-over');
-      var payload = e.dataTransfer.getData('text/plain');
-      if (!payload.startsWith('stage:')) return;
-      var sid = payload.replace('stage:', '');
-      var gid = this.dataset.groupId;
+      e.preventDefault(); this.classList.remove('drag-over');
+      var payload = e.dataTransfer.getData('text/plain'); if (!payload.startsWith('stage:')) return;
+      var sid = payload.replace('stage:', ''); var gid = this.dataset.groupId;
       showLoading(true);
       google.script.run.withSuccessHandler(function () { refreshAll(); toast('Student added to group'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-        .addStudentToStagingGroup(gid, sid);
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addStudentToStagingGroup(gid, sid);
     });
-
-    // Render members
-    if (!memberCount) {
-      dropZone.innerHTML = '<p class="muted">Drag students here</p>';
-    } else {
+    if (!memberCount) { dropZone.innerHTML = '<p class="muted">Drag students here</p>'; }
+    else {
       group.studentIds.forEach(function (sid) {
         if (!sid) return;
-        var s = APP.students.find(function (x) { return x.studentId === sid; });
-        if (!s) return;
-        var chip = document.createElement('div');
-        chip.className = 'student-chip student-chip--staged';
-        chip.innerHTML =
-          '<strong>' + esc(s.name) + '</strong> ' + accomBadges(s) +
+        var s = APP.students.find(function (x) { return x.studentId === sid; }); if (!s) return;
+        var chip = document.createElement('div'); chip.className = 'student-chip student-chip--staged';
+        chip.innerHTML = '<strong>' + esc(s.name) + '</strong> ' + accomBadges(s) +
           ' <button class="btn btn--sm btn--danger btn-remove-staged" data-group-id="' + esc(group.groupId) + '" data-student-id="' + esc(sid) + '">&times;</button>' +
           ' <button class="btn btn--sm btn--secondary btn-edit-accom" data-student-id="' + esc(sid) + '">IEP</button>';
         dropZone.appendChild(chip);
       });
     }
-
-    div.appendChild(dropZone);
-    container.appendChild(div);
+    div.appendChild(dropZone); container.appendChild(div);
   });
-
-  // Event delegation for staging group buttons
   container.addEventListener('click', function (e) {
     var target = e.target;
     if (target.classList.contains('btn-remove-staged')) {
-      var gid = target.dataset.groupId;
-      var sid = target.dataset.studentId;
       showLoading(true);
       google.script.run.withSuccessHandler(function () { refreshAll(); toast('Removed from group'); })
         .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .removeStudentFromStagingGroup(gid, sid);
+        .removeStudentFromStagingGroup(target.dataset.groupId, target.dataset.studentId);
     }
     if (target.classList.contains('btn-delete-group')) {
-      var gid2 = target.dataset.groupId;
-      if (!confirm('Delete this staging group?')) return;
-      showLoading(true);
+      if (!confirm('Delete this staging group?')) return; showLoading(true);
       google.script.run.withSuccessHandler(function () { refreshAll(); toast('Group deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .deleteStagingGroup(gid2);
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).deleteStagingGroup(target.dataset.groupId);
     }
     if (target.classList.contains('btn-place-group')) {
-      var gid3 = target.dataset.groupId;
-      var roomSel2 = container.querySelector('.staging-room-select[data-group-id="' + gid3 + '"]');
+      var gid = target.dataset.groupId;
+      var roomSel2 = container.querySelector('.staging-room-select[data-group-id="' + gid + '"]');
       var roomName = roomSel2 ? roomSel2.value : '';
       if (!roomName) { toast('Select a room first'); return; }
       showLoading(true);
       google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message || 'Group placed'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .placeStagingGroupInRoom(gid3, roomName);
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).placeStagingGroupInRoom(gid, roomName);
     }
-    if (target.classList.contains('btn-edit-accom')) {
-      openAccomModal(target.dataset.studentId);
-    }
+    if (target.classList.contains('btn-edit-accom')) openAccomModal(target.dataset.studentId);
   });
 }
 
 // =========================================================================
-// Assignment View  (Drag & Drop)
+// Assignment View
 // =========================================================================
 function initAssignView() {
-  document.getElementById('grid-room-select').addEventListener('change', function () {
-    APP.selectedRoom = this.value;
-    renderGrid();
-  });
+  document.getElementById('grid-room-select').addEventListener('change', function () { APP.selectedRoom = this.value; renderGrid(); });
   document.getElementById('assign-acc-filter').addEventListener('change', renderUnassignedList);
   document.getElementById('btn-auto-suggest').addEventListener('click', runAutoSuggest);
   document.getElementById('btn-finalize').addEventListener('click', runFinalize);
+  document.getElementById('filler-mode').addEventListener('change', function () { APP.fillerMode = this.checked; renderGrid(); });
+  document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf'); });
+  document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word'); });
 }
 
 function renderAssignView() {
-  // Populate room dropdown (filtered by grade)
-  var sel = document.getElementById('grid-room-select');
-  var prev = sel.value;
-  sel.innerHTML = '';
-  var filteredRooms = filterByGrade(APP.rooms);
+  var sel = document.getElementById('grid-room-select'); var prev = sel.value; sel.innerHTML = '';
+  var filteredRooms = filterRooms(APP.rooms);
   filteredRooms.forEach(function (r) {
-    var opt = document.createElement('option');
-    opt.value = r.roomName;
-    var label = r.roomName;
-    if (r.roomNumber) label += ' (Rm ' + r.roomNumber + ')';
-    opt.textContent = label;
+    var opt = document.createElement('option'); opt.value = r.roomName;
+    opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : '') + ' F' + (r.floor || '1');
     sel.appendChild(opt);
   });
-  if (prev && filteredRooms.some(function (r) { return r.roomName === prev; })) {
-    sel.value = prev;
-  }
+  if (prev && filteredRooms.some(function (r) { return r.roomName === prev; })) sel.value = prev;
   APP.selectedRoom = sel.value;
-
-  renderUnassignedList();
-  renderGrid();
+  renderUnassignedList(); renderGrid();
 }
-
-// ---------- Unassigned student list ----------
 
 function renderUnassignedList() {
   var accF = document.getElementById('assign-acc-filter').value;
-  var assignedIds = {};
-  APP.assignments.forEach(function (a) { assignedIds[a.studentId] = true; });
-
+  var assignedIds = {}; APP.assignments.forEach(function (a) { assignedIds[a.studentId] = true; });
   var list = filterStudentsByGrade(APP.students).filter(function (s) {
-    if (assignedIds[s.studentId]) return false;
-    if (accF && !s[accF]) return false;
-    return true;
+    if (assignedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
   });
-
-  var ul = document.getElementById('unassigned-list');
-  ul.innerHTML = '';
+  var ul = document.getElementById('unassigned-list'); ul.innerHTML = '';
   if (!list.length) { ul.innerHTML = '<li class="muted">No unassigned students match filters.</li>'; return; }
-
   list.forEach(function (s) {
-    var li = document.createElement('li');
-    li.className = 'student-chip';
-    li.setAttribute('draggable', 'true');
+    var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
     li.dataset.studentId = s.studentId;
-    li.innerHTML =
-      '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>' +
+    li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>' +
       ' <button class="btn btn--sm btn--secondary btn-inline-accom" data-student-id="' + esc(s.studentId) + '">IEP</button>';
-
-    li.addEventListener('dragstart', function (e) {
-      e.dataTransfer.setData('text/plain', s.studentId);
-      li.classList.add('dragging');
-    });
+    li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', s.studentId); li.classList.add('dragging'); });
     li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
-
     ul.appendChild(li);
   });
-
-  // Delegation for inline IEP edit buttons
   ul.addEventListener('click', function (e) {
-    if (e.target.classList.contains('btn-inline-accom')) {
-      e.stopPropagation();
-      openAccomModal(e.target.dataset.studentId);
-    }
+    if (e.target.classList.contains('btn-inline-accom')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
   });
 }
 
@@ -706,25 +529,23 @@ function renderGrid() {
   var container = document.getElementById('grid-container');
   var warnings = document.getElementById('grid-warnings');
   var infoBar = document.getElementById('grid-room-info');
-  container.innerHTML = '';
-  warnings.innerHTML = '';
-  infoBar.innerHTML = '';
+  container.innerHTML = ''; warnings.innerHTML = ''; infoBar.innerHTML = '';
 
   var room = APP.rooms.find(function (r) { return r.roomName === APP.selectedRoom; });
   if (!room) { container.innerHTML = '<p class="muted">Select a room.</p>'; return; }
 
-  // Info bar
   var teacher = APP.teachers.find(function (t) { return t.teacherId === room.teacherId; });
   var infoParts = [];
   if (room.roomNumber) infoParts.push('Room ' + room.roomNumber);
   if (room.hallway) infoParts.push(room.hallway);
+  if (room.floor) infoParts.push('Floor ' + room.floor);
   if (teacher) infoParts.push('Teacher: ' + teacher.name);
   if (room.grade) infoParts.push('Grade ' + room.grade);
   var cap = room.maxCapacity || (room.rows * room.columns);
-  infoParts.push('Capacity: ' + cap);
+  var fillerCount = APP.fillerCells.filter(function (f) { return f.roomName === room.roomName; }).length;
+  infoParts.push('Capacity: ' + (cap - fillerCount) + ' (' + fillerCount + ' blocked)');
   infoBar.innerHTML = infoParts.map(function (p) { return '<span class="info-chip">' + esc(p) + '</span>'; }).join(' ');
 
-  // Build seat map
   var seatMap = {};
   var roomAssignments = APP.assignments.filter(function (a) { return a.roomName === room.roomName; });
   roomAssignments.forEach(function (a) { seatMap[a.row + ',' + a.column] = a; });
@@ -735,118 +556,111 @@ function renderGrid() {
     for (var c = 1; c <= room.columns; c++) {
       var cell = document.createElement('div');
       cell.className = 'grid-cell';
-      cell.dataset.row = r;
-      cell.dataset.col = c;
-
+      cell.dataset.row = r; cell.dataset.col = c;
       var key = r + ',' + c;
+      var isFiller = isFillerCell(room.roomName, r, c);
       var a = seatMap[key];
-      if (a) {
+
+      if (isFiller && !a) {
+        // Filler / blocked cell
+        cell.classList.add('filler');
+        cell.innerHTML = '<span class="cell-filler-icon">X</span>';
+        // Click to toggle filler off
+        (function (row, col) {
+          cell.addEventListener('click', function () {
+            if (!APP.fillerMode) return;
+            showLoading(true);
+            google.script.run.withSuccessHandler(function (res) {
+              APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
+              if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
+              renderGrid(); showLoading(false);
+            }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+              .toggleFillerCell(APP.selectedRoom, row, col);
+          });
+        })(r, c);
+      } else if (a) {
         var student = APP.students.find(function (s) { return s.studentId === a.studentId; });
         if (student) {
           cell.classList.add('occupied');
-          cell.innerHTML =
-            '<span class="cell-name">' + esc(student.name) + '</span>' +
+          if (student.readAloud) cell.classList.add('read-aloud');
+          cell.innerHTML = '<span class="cell-name">' + esc(student.name) + '</span>' +
             '<span class="cell-codes">' + accomBadges(student) + '</span>' +
             '<button class="btn btn--sm btn--secondary cell-iep-btn" data-student-id="' + esc(student.studentId) + '">IEP</button>';
-
-          if (student.proximity && r > 2) {
-            cell.classList.add('warn-proximity');
-          }
-
+          if (student.proximity && r > 2) cell.classList.add('warn-proximity');
           cell.setAttribute('draggable', 'true');
           (function (sid) {
-            cell.addEventListener('dragstart', function (e) {
-              e.dataTransfer.setData('text/plain', sid);
-              cell.classList.add('dragging');
-            });
+            cell.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', sid); cell.classList.add('dragging'); });
             cell.addEventListener('dragend', function () { cell.classList.remove('dragging'); });
           })(student.studentId);
-
-          // Double-click to unassign
           (function (sid) {
             cell.addEventListener('dblclick', function () {
-              if (!confirm('Unassign this student?')) return;
-              showLoading(true);
+              if (!confirm('Unassign this student?')) return; showLoading(true);
               google.script.run.withSuccessHandler(function () {
                 APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== sid; });
-                renderAssignView();
-                showLoading(false);
-                toast('Student unassigned');
-              }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-                .removeAssignment(sid);
+                renderAssignView(); showLoading(false); toast('Student unassigned');
+              }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).removeAssignment(sid);
             });
           })(student.studentId);
         }
       } else {
+        // Empty cell
         cell.innerHTML = '<span class="cell-label">R' + r + 'C' + c + '</span>';
+        // In filler mode, click to toggle filler
+        (function (row, col) {
+          cell.addEventListener('click', function () {
+            if (!APP.fillerMode) return;
+            showLoading(true);
+            google.script.run.withSuccessHandler(function (res) {
+              APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
+              if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
+              renderGrid(); showLoading(false);
+            }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+              .toggleFillerCell(APP.selectedRoom, row, col);
+          });
+        })(r, c);
       }
 
-      // Drop handlers
-      cell.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
-      cell.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
-
-      (function (row, col) {
-        cell.addEventListener('drop', function (e) {
-          e.preventDefault();
-          this.classList.remove('drag-over');
-          var studentId = e.dataTransfer.getData('text/plain');
-          if (!studentId || studentId.startsWith('stage:')) return;
-
-          var existing = seatMap[row + ',' + col];
-          if (existing && existing.studentId !== studentId) {
-            toast('Seat occupied — double-click to unassign first.');
-            return;
-          }
-
-          showLoading(true);
-          google.script.run.withSuccessHandler(function () {
-            APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== studentId; });
-            APP.assignments.push({ studentId: studentId, roomName: APP.selectedRoom, row: row, column: col });
-            renderAssignView();
-            showLoading(false);
-            toast('Student placed');
-          }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-            .saveAssignment(studentId, APP.selectedRoom, row, col);
-        });
-      })(r, c);
+      // Drop handlers (only on non-filler cells)
+      if (!isFiller) {
+        cell.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
+        cell.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
+        (function (row, col) {
+          cell.addEventListener('drop', function (e) {
+            e.preventDefault(); this.classList.remove('drag-over');
+            var studentId = e.dataTransfer.getData('text/plain');
+            if (!studentId || studentId.startsWith('stage:')) return;
+            var existing = seatMap[row + ',' + col];
+            if (existing && existing.studentId !== studentId) { toast('Seat occupied — double-click to unassign first.'); return; }
+            showLoading(true);
+            google.script.run.withSuccessHandler(function () {
+              APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== studentId; });
+              APP.assignments.push({ studentId: studentId, roomName: APP.selectedRoom, row: row, column: col });
+              renderAssignView(); showLoading(false); toast('Student placed');
+            }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+              .saveAssignment(studentId, APP.selectedRoom, row, col);
+          });
+        })(r, c);
+      }
 
       container.appendChild(cell);
     }
   }
 
-  // IEP button delegation on grid
   container.addEventListener('click', function (e) {
-    if (e.target.classList.contains('cell-iep-btn')) {
-      e.stopPropagation();
-      openAccomModal(e.target.dataset.studentId);
-    }
+    if (e.target.classList.contains('cell-iep-btn')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
   });
 
   // Warnings
   var warnMsgs = [];
   var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
   if (roomAssignments.length > sgLimit) {
-    var hasSG = roomAssignments.some(function (a) {
-      var s = APP.students.find(function (x) { return x.studentId === a.studentId; });
-      return s && s.smallGroup;
-    });
-    if (hasSG) {
-      warnMsgs.push('Warning: This room has ' + roomAssignments.length + ' students but contains Small Group students (limit ' + sgLimit + ').');
-    }
+    var hasSG = roomAssignments.some(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.smallGroup; });
+    if (hasSG) warnMsgs.push('Warning: Room has ' + roomAssignments.length + ' students with Small Group students (limit ' + sgLimit + ').');
   }
-
-  var oneToOneStudents = roomAssignments.filter(function (a) {
-    var s = APP.students.find(function (x) { return x.studentId === a.studentId; });
-    return s && s.oneToOne;
-  });
-  if (oneToOneStudents.length && roomAssignments.length > 1) {
-    warnMsgs.push('Warning: 1:1 Testing student present but room has multiple students.');
-  }
-
+  var oto = roomAssignments.filter(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.oneToOne; });
+  if (oto.length && roomAssignments.length > 1) warnMsgs.push('Warning: 1:1 Testing student present but room has multiple students.');
   warnings.innerHTML = warnMsgs.map(function (m) { return '<p class="warn">' + m + '</p>'; }).join('');
 }
-
-// ---------- Auto-Suggest ----------
 
 function runAutoSuggest() {
   if (!APP.rooms.length) { toast('Create rooms first'); return; }
@@ -857,27 +671,54 @@ function runAutoSuggest() {
   google.script.run.withSuccessHandler(function (result) {
     if (result.error) { toast(result.error); showLoading(false); return; }
     google.script.run.withSuccessHandler(function () {
-      APP.assignments = result;
-      renderAssignView();
-      showLoading(false);
-      toast('Auto-suggest complete — ' + result.length + ' placements.' + (gradeF ? ' (Grade ' + gradeF + ')' : ''));
-    }).withFailureHandler(function (e) { toast('Error saving: ' + e.message); showLoading(false); })
-      .applyRecommendations(result);
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .generateRecommendations(sgLimit, gradeF);
+      APP.assignments = result; renderAssignView(); showLoading(false);
+      toast('Auto-suggest: ' + result.length + ' placements' + (gradeF ? ' (Gr ' + gradeF + ')' : ''));
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).applyRecommendations(result);
+  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).generateRecommendations(sgLimit, gradeF);
 }
-
-// ---------- Finalize ----------
 
 function runFinalize() {
   if (!APP.assignments.length) { toast('No assignments to finalize'); return; }
   if (!confirm('Generate finalized layout sheets in the spreadsheet?')) return;
   showLoading(true);
-  google.script.run.withSuccessHandler(function (res) {
+  google.script.run.withSuccessHandler(function (res) { showLoading(false); toast(res.message || 'Layout finalized'); })
+    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).finalizeLayout();
+}
+
+// ---------- Export PDF / Word ----------
+
+function runExport(format) {
+  if (!APP.assignments.length) { toast('No assignments to export'); return; }
+  showLoading(true);
+  google.script.run.withSuccessHandler(function (htmlContent) {
     showLoading(false);
-    toast(res.message || 'Layout finalized');
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-    .finalizeLayout();
+    if (format === 'word') {
+      // Word (.doc) can be generated from HTML with mso namespace
+      var wordHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+        '<head><meta charset="utf-8"><title>KCMS Testing Assignments</title></head><body>' +
+        htmlContent.replace(/<!DOCTYPE html>.*?<body>/s, '').replace(/<\/body><\/html>/, '') +
+        '</body></html>';
+      var blob = new Blob([wordHtml], { type: 'application/msword' });
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'KCMS_Testing_Assignments.doc';
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast('Word document downloaded');
+    } else {
+      // PDF via print dialog
+      var win = window.open('', '_blank');
+      if (win) {
+        win.document.write(htmlContent);
+        win.document.close();
+        win.focus();
+        setTimeout(function () { win.print(); }, 500);
+        toast('Print dialog opened — save as PDF');
+      } else {
+        toast('Pop-up blocked — allow pop-ups for this site');
+      }
+    }
+  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).generateExportHTML();
 }
 
 // =========================================================================
@@ -888,52 +729,36 @@ function initTemplateView() {
     var name = document.getElementById('tpl-name').value.trim();
     if (!name) { toast('Enter a template name'); return; }
     showLoading(true);
-    google.script.run.withSuccessHandler(function (res) {
-      document.getElementById('tpl-name').value = '';
-      refreshAll();
-      toast(res.message);
-    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-      .saveTemplate(name);
+    google.script.run.withSuccessHandler(function (res) { document.getElementById('tpl-name').value = ''; refreshAll(); toast(res.message); })
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).saveTemplate(name);
   });
 }
 
 function renderTemplateList() {
-  var container = document.getElementById('template-list');
-  container.innerHTML = '';
-  if (!APP.templates.length) {
-    container.innerHTML = '<p class="muted">No saved templates.</p>';
-    return;
-  }
+  var container = document.getElementById('template-list'); container.innerHTML = '';
+  if (!APP.templates.length) { container.innerHTML = '<p class="muted">No saved templates.</p>'; return; }
   APP.templates.forEach(function (tpl) {
-    var div = document.createElement('div');
-    div.className = 'template-card';
+    var div = document.createElement('div'); div.className = 'template-card';
     var d = tpl.data || {};
-    var tCount = (d.teachers || []).length;
-    var rCount = (d.rooms || []).length;
-    div.innerHTML =
-      '<h3>' + esc(tpl.templateName) + '</h3>' +
-      '<p class="muted">' + tCount + ' teacher(s), ' + rCount + ' room(s)</p>' +
+    div.innerHTML = '<h3>' + esc(tpl.templateName) + '</h3>' +
+      '<p class="muted">' + (d.teachers || []).length + ' teacher(s), ' + (d.rooms || []).length + ' room(s)</p>' +
       '<button class="btn btn--sm btn--primary btn-load-tpl" data-name="' + esc(tpl.templateName) + '">Load</button> ' +
       '<button class="btn btn--sm btn--danger btn-delete-tpl" data-name="' + esc(tpl.templateName) + '">Delete</button>';
     container.appendChild(div);
   });
-
   container.addEventListener('click', function (e) {
     if (e.target.classList.contains('btn-load-tpl')) {
       var name = e.target.dataset.name;
-      if (!confirm('Load template "' + name + '"? This will replace current teachers and rooms.')) return;
+      if (!confirm('Load "' + name + '"? Replaces current teachers and rooms.')) return;
       showLoading(true);
       google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .loadTemplate(name);
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).loadTemplate(name);
     }
     if (e.target.classList.contains('btn-delete-tpl')) {
-      var name2 = e.target.dataset.name;
-      if (!confirm('Delete template "' + name2 + '"?')) return;
+      if (!confirm('Delete "' + e.target.dataset.name + '"?')) return;
       showLoading(true);
       google.script.run.withSuccessHandler(function () { refreshAll(); toast('Template deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-        .deleteTemplate(name2);
+        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).deleteTemplate(e.target.dataset.name);
     }
   });
 }
@@ -941,33 +766,23 @@ function renderTemplateList() {
 // =========================================================================
 // Utility
 // =========================================================================
-
-function esc(str) {
-  var d = document.createElement('div');
-  d.textContent = str || '';
-  return d.innerHTML;
-}
+function esc(str) { var d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
 
 function accomBadges(s) {
-  var badges = [];
-  if (s.smallGroup) badges.push('<span class="badge badge--sg">SG</span>');
-  if (s.readAloud) badges.push('<span class="badge badge--ra">RA</span>');
-  if (s.oneToOne) badges.push('<span class="badge badge--11">1:1</span>');
-  if (s.proximity) badges.push('<span class="badge badge--prox">PROX</span>');
-  if (s.prompting) badges.push('<span class="badge badge--pmpt">PMPT</span>');
-  if (s.otherAccommodations) badges.push('<span class="badge badge--other">' + esc(s.otherAccommodations) + '</span>');
-  return badges.join(' ');
+  var b = [];
+  if (s.smallGroup) b.push('<span class="badge badge--sg">SG</span>');
+  if (s.readAloud) b.push('<span class="badge badge--ra">RA</span>');
+  if (s.oneToOne) b.push('<span class="badge badge--11">1:1</span>');
+  if (s.proximity) b.push('<span class="badge badge--prox">PROX</span>');
+  if (s.prompting) b.push('<span class="badge badge--pmpt">PMPT</span>');
+  if (s.otherAccommodations) b.push('<span class="badge badge--other">' + esc(s.otherAccommodations) + '</span>');
+  return b.join(' ');
 }
 
 function toast(msg) {
-  var el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-  clearTimeout(el._timer);
-  el._timer = setTimeout(function () { el.classList.add('hidden'); }, 4000);
+  var el = document.getElementById('toast'); el.textContent = msg; el.classList.remove('hidden');
+  clearTimeout(el._timer); el._timer = setTimeout(function () { el.classList.add('hidden'); }, 4000);
 }
 
-function showLoading(show) {
-  document.getElementById('loading').classList.toggle('hidden', !show);
-}
+function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
 </script>
