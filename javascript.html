@@ -787,13 +787,13 @@ function runExport(format, triggerBtn) {
     if (format === 'word') {
       // Word (.doc) can be generated from HTML with mso namespace
       var wordHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
-        '<head><meta charset="utf-8"><title>KCMS Testing Assignments</title></head><body>' +
+        '<head><meta charset="utf-8"><title>Testing Assignments</title></head><body>' +
         htmlContent.replace(/<!DOCTYPE html>.*?<body>/s, '').replace(/<\/body><\/html>/, '') +
         '</body></html>';
       var blob = new Blob([wordHtml], { type: 'application/msword' });
       var link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'KCMS_Testing_Assignments.doc';
+      link.download = 'Testing_Assignments.doc';
       link.click();
       URL.revokeObjectURL(link.href);
       toast('Word document downloaded');
