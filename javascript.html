@@ -18,6 +18,7 @@ var APP = {
   designerTool: 'classroom',
   designerLayouts: [],
   backups: [],
+  designerZoom: 1.0,
   _drawing: false, _drawStart: null,
   _dragging: false, _dragRoom: null, _dragStart: null, _dragOriginal: null,
   _resizing: false, _resizeRoom: null, _resizeStart: null, _resizeOriginal: null
@@ -26,6 +27,9 @@ var APP = {
 var GRID = 30;
 var CANVAS_COLS = 80;
 var CANVAS_ROWS = 80;
+
+// Returns the effective pixel size of one grid unit at current zoom
+function zg() { return GRID * APP.designerZoom; }
 
 var ROOM_TYPES = {
   classroom:  { label: 'Classroom',  color: '#3b82f6', bg: '#dbeafe',  icon: '\u{1F4DA}' },
@@ -923,8 +927,8 @@ function initDesigner() {
 
   // Canvas setup
   var canvas = document.getElementById('designer-canvas');
-  canvas.style.width = (CANVAS_COLS * GRID) + 'px';
-  canvas.style.height = (CANVAS_ROWS * GRID) + 'px';
+  canvas.style.width = (CANVAS_COLS * zg()) + 'px';
+  canvas.style.height = (CANVAS_ROWS * zg()) + 'px';
 
   var preview = document.createElement('div');
   preview.id = 'draw-preview';
@@ -934,6 +938,15 @@ function initDesigner() {
   canvas.addEventListener('mousedown', onCanvasMouseDown);
   document.addEventListener('mousemove', onCanvasMouseMove);
   document.addEventListener('mouseup', onCanvasMouseUp);
+
+  // Ctrl+scroll to zoom
+  var scrollEl = document.querySelector('.designer-canvas-scroll');
+  scrollEl.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    var delta = e.deltaY < 0 ? 0.1 : -0.1;
+    applyDesignerZoom(Math.round((APP.designerZoom + delta) * 100) / 100);
+  }, { passive: false });
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Delete' && APP.designerSelectedId) {
@@ -956,6 +969,18 @@ function initDesigner() {
       toast('Canvas cleared');
     }
   });
+
+  // Zoom controls
+  document.getElementById('btn-zoom-in').addEventListener('click', function () {
+    applyDesignerZoom(Math.round((APP.designerZoom + 0.25) * 100) / 100);
+  });
+  document.getElementById('btn-zoom-out').addEventListener('click', function () {
+    applyDesignerZoom(Math.round((APP.designerZoom - 0.25) * 100) / 100);
+  });
+  document.getElementById('btn-zoom-reset').addEventListener('click', function () {
+    applyDesignerZoom(1.0);
+  });
+
   // Save layout button
   var saveLayoutBtn = document.getElementById('btn-save-layout');
   saveLayoutBtn.addEventListener('click', function () {
@@ -979,9 +1004,12 @@ function initDesigner() {
 function snapGrid(px) { return Math.round(px / GRID); }
 
 function getCanvasCoords(e) {
-  var canvas = document.getElementById('designer-canvas');
-  var rect = canvas.getBoundingClientRect();
-  return { x: e.clientX - rect.left + canvas.scrollLeft, y: e.clientY - rect.top + canvas.scrollTop };
+  var scrollEl = document.querySelector('.designer-canvas-scroll');
+  var rect = scrollEl.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left + scrollEl.scrollLeft) / APP.designerZoom,
+    y: (e.clientY - rect.top + scrollEl.scrollTop) / APP.designerZoom
+  };
 }
 
 function onCanvasMouseDown(e) {
@@ -1035,10 +1063,10 @@ function onCanvasMouseMove(e) {
     var w = Math.max(2, Math.abs(gx - sx)), h = Math.max(2, Math.abs(gy - sy));
     var preview = document.getElementById('draw-preview');
     preview.classList.remove('hidden');
-    preview.style.left = (left * GRID) + 'px';
-    preview.style.top = (top * GRID) + 'px';
-    preview.style.width = (w * GRID) + 'px';
-    preview.style.height = (h * GRID) + 'px';
+    preview.style.left = (left * zg()) + 'px';
+    preview.style.top = (top * zg()) + 'px';
+    preview.style.width = (w * zg()) + 'px';
+    preview.style.height = (h * zg()) + 'px';
     return;
   }
 
@@ -1115,8 +1143,21 @@ function deleteDesignerRoom(id) {
   toast('Room deleted');
 }
 
+function applyDesignerZoom(newZoom) {
+  APP.designerZoom = Math.min(3.0, Math.max(0.25, newZoom));
+  var pct = Math.round(APP.designerZoom * 100);
+  var zoomLabel = document.getElementById('zoom-level');
+  if (zoomLabel) zoomLabel.textContent = pct + '%';
+  renderDesignerCanvas();
+}
+
 function renderDesignerCanvas() {
   var canvas = document.getElementById('designer-canvas');
+  // Update canvas size and grid pattern to match zoom
+  var gridPx = zg();
+  canvas.style.width = (CANVAS_COLS * gridPx) + 'px';
+  canvas.style.height = (CANVAS_ROWS * gridPx) + 'px';
+  canvas.style.backgroundSize = gridPx + 'px ' + gridPx + 'px';
   // Preserve preview element
   var preview = document.getElementById('draw-preview');
   canvas.innerHTML = '';
@@ -1135,10 +1176,10 @@ function renderDesignerCanvas() {
     var el = document.createElement('div');
     el.className = 'designer-room' + floorClass + dimmed + (room.id === APP.designerSelectedId ? ' selected' : '');
     el.dataset.roomId = room.id;
-    el.style.left = (room.gridX * GRID) + 'px';
-    el.style.top = (room.gridY * GRID) + 'px';
-    el.style.width = (room.gridW * GRID) + 'px';
-    el.style.height = (room.gridH * GRID) + 'px';
+    el.style.left = (room.gridX * gridPx) + 'px';
+    el.style.top = (room.gridY * gridPx) + 'px';
+    el.style.width = (room.gridW * gridPx) + 'px';
+    el.style.height = (room.gridH * gridPx) + 'px';
     el.style.backgroundColor = typeInfo.bg;
     el.style.borderColor = typeInfo.color;
 

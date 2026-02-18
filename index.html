@@ -337,6 +337,12 @@
     <div class="designer-main card">
       <div class="designer-toolbar">
         <span class="designer-info" id="designer-info">Draw rooms on the grid below. No student names required.</span>
+        <div class="zoom-controls">
+          <button class="btn btn--sm btn--secondary" id="btn-zoom-out" title="Zoom Out (Ctrl+Scroll)">&#8722;</button>
+          <span id="zoom-level" class="zoom-label">100%</span>
+          <button class="btn btn--sm btn--secondary" id="btn-zoom-in" title="Zoom In (Ctrl+Scroll)">+</button>
+          <button class="btn btn--sm btn--secondary" id="btn-zoom-reset" title="Reset to 100%">1:1</button>
+        </div>
       </div>
       <div class="designer-canvas-scroll">
         <div class="designer-canvas" id="designer-canvas"></div>
