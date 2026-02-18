@@ -981,6 +981,50 @@ function initDesigner() {
     applyDesignerZoom(1.0);
   });
 
+  // Export layout to JSON file
+  document.getElementById('btn-export-layout').addEventListener('click', function () {
+    if (!APP.designerRooms.length) { toast('No rooms on canvas to export'); return; }
+    var payload = JSON.stringify(APP.designerRooms, null, 2);
+    var blob = new Blob([payload], { type: 'application/json' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'school-layout.json';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast('Layout exported to school-layout.json');
+  });
+
+  // Import layout from JSON file
+  var fileInput = document.getElementById('import-layout-file');
+  document.getElementById('btn-import-layout').addEventListener('click', function () {
+    fileInput.value = '';
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', function () {
+    var file = fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var rooms = JSON.parse(e.target.result);
+        if (!Array.isArray(rooms)) throw new Error('Expected an array of rooms');
+        // Validate basic structure
+        rooms.forEach(function (r) {
+          if (!r.id || !r.name || r.gridX === undefined) throw new Error('Invalid room data');
+        });
+        if (APP.designerRooms.length && !confirm('Replace current canvas with imported layout (' + rooms.length + ' rooms)?')) return;
+        APP.designerRooms = rooms;
+        APP.designerSelectedId = null;
+        renderDesignerCanvas();
+        renderDesignerProps();
+        toast('Imported ' + rooms.length + ' rooms from ' + file.name);
+      } catch (err) {
+        toast('Import failed: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
   // Save layout button
   var saveLayoutBtn = document.getElementById('btn-save-layout');
   saveLayoutBtn.addEventListener('click', function () {
