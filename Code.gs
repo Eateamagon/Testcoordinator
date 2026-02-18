@@ -1,5 +1,5 @@
 /**
- * KCMS VDOE-Compliant Student Testing Coordinator
+ * VDOE-Compliant Student Testing Coordinator
  * Server-side Google Apps Script
  *
  * Manages Students, Rooms, Teachers, Templates, Staging, Assignments,
@@ -13,7 +13,7 @@
 function doGet() {
   return HtmlService.createTemplateFromFile('index')
     .evaluate()
-    .setTitle('KCMS Testing Coordinator')
+    .setTitle('Testing Coordinator')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
@@ -709,7 +709,7 @@ function finalizeLayout() {
     if (room.floor) title += ' — Floor ' + room.floor;
     if (teacher) title += ' — ' + teacher.name;
     layoutSheet.getRange(1, 1).setValue(title);
-    layoutSheet.getRange(1, 1).setFontWeight('bold').setFontSize(12).setFontColor('#4a1d96');
+    layoutSheet.getRange(1, 1).setFontWeight('bold').setFontSize(12).setFontColor('#111111');
 
     layoutSheet.insertRowAfter(1);
     layoutSheet.getRange(2, 1).setValue('[ PROCTOR STATION — Row 1 ]');
@@ -757,22 +757,22 @@ function generateExportHTML() {
 
   var html = [];
   html.push('<!DOCTYPE html><html><head><meta charset="utf-8">');
-  html.push('<title>KCMS Testing Assignments</title>');
+  html.push('<title>Testing Assignments</title>');
   html.push('<style>');
   html.push('body{font-family:Arial,sans-serif;font-size:11px;color:#1f2937;margin:20px;}');
-  html.push('h1{color:#4a1d96;font-size:18px;border-bottom:3px solid #d4a017;padding-bottom:4px;margin-bottom:8px;}');
-  html.push('h2{color:#4a1d96;font-size:14px;margin:12px 0 4px;}');
+  html.push('h1{color:#111;font-size:18px;border-bottom:3px solid #9ca3af;padding-bottom:4px;margin-bottom:8px;}');
+  html.push('h2{color:#111;font-size:14px;margin:12px 0 4px;}');
   html.push('h3{font-size:12px;margin:8px 0 3px;color:#333;}');
   html.push('.ra{color:#cc0000;font-weight:bold;}');
   html.push('table{border-collapse:collapse;width:100%;margin-bottom:10px;}');
   html.push('td,th{border:1px solid #999;padding:3px 5px;text-align:center;font-size:10px;}');
-  html.push('th{background:#f3e8ff;}');
+  html.push('th{background:#f3f4f6;}');
   html.push('.blocked{background:#d1d5db;}');
   html.push('.summary-list{margin:4px 0 10px 16px;font-size:11px;line-height:1.4;}');
-  html.push('.floor-label{background:#f3e8ff;padding:2px 8px;border-radius:3px;font-weight:bold;display:inline-block;margin:6px 0 3px;}');
+  html.push('.floor-label{background:#e5e7eb;padding:2px 8px;border-radius:3px;font-weight:bold;display:inline-block;margin:6px 0 3px;}');
   html.push('@media print{h1{page-break-before:avoid;}h2{page-break-before:always;}.no-break{page-break-inside:avoid;}}');
   html.push('</style></head><body>');
-  html.push('<h1>KCMS SOL Testing Room Assignments</h1>');
+  html.push('<h1>SOL Testing Room Assignments</h1>');
 
   gradeOrder.forEach(function (g) {
     var gradeKey = g || 'Shared';
