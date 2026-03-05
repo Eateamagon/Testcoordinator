@@ -1,1453 +1,1478 @@
 <script>
-// =========================================================================
-// State
-// =========================================================================
-var APP = {
-  students: [], teachers: [], rooms: [], assignments: [],
-  stagingGroups: [], templates: [], fillerCells: [],
-  editingStudentId: null, editingTeacherId: null,
-  selectedRoom: null,
-  gradeFilter: '',
-  floorFilter: '',
-  fillerMode: false,
-  // Designer state
-  designerRooms: [],
-  designerSelectedId: null,
-  designerFloor: '1',
-  designerFloorView: '',
-  designerTool: 'classroom',
-  designerLayouts: [],
-  backups: [],
-  designerZoom: 1.0,
-  _drawing: false, _drawStart: null,
-  _dragging: false, _dragRoom: null, _dragStart: null, _dragOriginal: null,
-  _resizing: false, _resizeRoom: null, _resizeStart: null, _resizeOriginal: null
-};
-
-var GRID = 30;
-var CANVAS_COLS = 80;
-var CANVAS_ROWS = 80;
-
-// Returns the effective pixel size of one grid unit at current zoom
-function zg() { return GRID * APP.designerZoom; }
-
-var ROOM_TYPES = {
-  classroom:  { label: 'Classroom',  color: '#3b82f6', bg: '#dbeafe',  icon: '\u{1F4DA}' },
-  office:     { label: 'Office',     color: '#64748b', bg: '#f1f5f9',  icon: '\u{1F4BC}' },
-  library:    { label: 'Library',    color: '#d97706', bg: '#fef3c7',  icon: '\u{1F4D6}' },
-  lab:        { label: 'Science Lab',color: '#059669', bg: '#d1fae5',  icon: '\u{1F52C}' },
-  gym:        { label: 'Gymnasium',  color: '#dc2626', bg: '#fee2e2',  icon: '\u{1F3C0}' },
-  cafeteria:  { label: 'Cafeteria',  color: '#ea580c', bg: '#ffedd5',  icon: '\u{1F372}' },
-  restroom:   { label: 'Restroom',   color: '#6b7280', bg: '#f3f4f6',  icon: '\u{1F6BB}' },
-  hallway:    { label: 'Hallway',    color: '#9ca3af', bg: '#f9fafb',  icon: '\u{1F6AA}' },
-  auditorium: { label: 'Auditorium', color: '#7c3aed', bg: '#ede9fe',  icon: '\u{1F3B5}' },
-  storage:    { label: 'Storage',    color: '#92400e', bg: '#fef3c7',  icon: '\u{1F4E6}' }
-};
-
-// =========================================================================
-// Bootstrap
-// =========================================================================
-document.addEventListener('DOMContentLoaded', function () {
-  initGradeSwitcher();
-  initFloorSwitcher();
-  initNav();
-  initStudentForm();
-  initTeacherForm();
-  initRoomForm();
-  initStagingView();
-  initAssignView();
-  initTemplateView();
-  initAccomModal();
-  initDesigner();
-  initBackupView();
-  refreshAll();
-});
-
-function refreshAll(quiet) {
-  if (!quiet) showLoading(true);
-  var pending = 7;
-  function done() { pending--; if (pending <= 0) { renderAll(); if (!quiet) showLoading(false); } }
-  google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); }).withFailureHandler(function () { done(); }).getStudents();
-  google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); }).withFailureHandler(function () { done(); }).getTeachers();
-  google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); }).withFailureHandler(function () { done(); }).getRooms();
-  google.script.run.withSuccessHandler(function (d) { APP.assignments = d || []; done(); }).withFailureHandler(function () { done(); }).getAssignments();
-  google.script.run.withSuccessHandler(function (d) { APP.stagingGroups = d || []; done(); }).withFailureHandler(function () { done(); }).getStagingGroups();
-  google.script.run.withSuccessHandler(function (d) { APP.templates = d || []; done(); }).withFailureHandler(function () { done(); }).getTemplates();
-  google.script.run.withSuccessHandler(function (d) { APP.fillerCells = d || []; done(); }).withFailureHandler(function () { done(); }).getFillerCells();
-}
-
-function renderAll() {
-  renderStudentTable(); renderTeacherTable(); renderRoomList();
-  populateTeacherDropdown(); renderStagingView(); renderAssignView(); renderTemplateList();
-}
-
-// =========================================================================
-// Grade & Floor Switchers
-// =========================================================================
-function initGradeSwitcher() {
-  document.querySelectorAll('.grade-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('.grade-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      APP.gradeFilter = btn.dataset.grade;
-      renderAll();
-    });
-  });
-}
-
-function initFloorSwitcher() {
-  document.querySelectorAll('.floor-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('.floor-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      APP.floorFilter = btn.dataset.floor;
-      renderAll();
-    });
-  });
-}
-
-function filterByGrade(arr, gradeKey) {
-  gradeKey = gradeKey || 'grade';
-  if (!APP.gradeFilter) return arr;
-  return arr.filter(function (item) { var g = item[gradeKey]; return !g || String(g) === String(APP.gradeFilter); });
-}
-
-function filterByFloor(arr) {
-  if (!APP.floorFilter) return arr;
-  return arr.filter(function (item) { return !item.floor || String(item.floor) === String(APP.floorFilter); });
-}
-
-function filterRooms(arr) {
-  var result = filterByGrade(arr);
-  return filterByFloor(result);
-}
-
-function filterStudentsByGrade(arr) {
-  if (!APP.gradeFilter) return arr;
-  return arr.filter(function (s) { return String(s.grade) === String(APP.gradeFilter); });
-}
-
-function isFillerCell(roomName, row, col) {
-  return APP.fillerCells.some(function (f) {
-    return f.roomName === roomName && f.row === row && f.column === col;
-  });
-}
-
-// =========================================================================
-// Navigation
-// =========================================================================
-function initNav() {
-  document.querySelectorAll('.nav-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('.nav-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      document.querySelectorAll('.view').forEach(function (v) { v.classList.add('hidden'); });
-      document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
-      if (btn.dataset.view === 'assign') renderAssignView();
-      if (btn.dataset.view === 'staging') renderStagingView();
-      if (btn.dataset.view === 'rooms') populateTeacherDropdown();
-      if (btn.dataset.view === 'designer') refreshDesignerLayouts();
-      if (btn.dataset.view === 'templates') refreshBackups();
-    });
-  });
-}
-
-// =========================================================================
-// Accommodation Quick-Edit Modal
-// =========================================================================
-function initAccomModal() {
-  document.getElementById('am-cancel').addEventListener('click', closeAccomModal);
-  document.getElementById('am-save').addEventListener('click', function () {
-    var sid = document.getElementById('am-student-id').value;
-    var s = APP.students.find(function (x) { return x.studentId === sid; });
-    if (!s) return;
-    var data = {
-      studentId: sid, name: s.name, grade: s.grade,
-      smallGroup: document.getElementById('am-smallgroup').checked,
-      readAloud: document.getElementById('am-readaloud').checked,
-      oneToOne: document.getElementById('am-onetoone').checked,
-      proximity: document.getElementById('am-proximity').checked,
-      prompting: document.getElementById('am-prompting').checked,
-      otherAccommodations: document.getElementById('am-other').value.trim()
-    };
-    showLoading(true);
-    google.script.run.withSuccessHandler(function () { closeAccomModal(); refreshAll(); toast('Accommodations updated'); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-      .updateStudent(data);
-  });
-}
-
-function openAccomModal(studentId) {
-  var s = APP.students.find(function (x) { return x.studentId === studentId; });
-  if (!s) return;
-  document.getElementById('am-student-id').value = s.studentId;
-  document.getElementById('accom-modal-name').textContent = s.name + ' (' + s.studentId + ')';
-  document.getElementById('am-smallgroup').checked = s.smallGroup;
-  document.getElementById('am-readaloud').checked = s.readAloud;
-  document.getElementById('am-onetoone').checked = s.oneToOne;
-  document.getElementById('am-proximity').checked = s.proximity;
-  document.getElementById('am-prompting').checked = s.prompting;
-  document.getElementById('am-other').value = s.otherAccommodations || '';
-  document.getElementById('accom-modal').classList.remove('hidden');
-}
-
-function closeAccomModal() { document.getElementById('accom-modal').classList.add('hidden'); }
-
-// =========================================================================
-// Student Form
-// =========================================================================
-function initStudentForm() {
-  document.getElementById('student-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var data = readStudentForm();
-    if (!data.name || !data.studentId || !data.grade) { toast('Fill all required fields'); return; }
-    showLoading(true);
-    if (APP.editingStudentId) {
-      google.script.run.withSuccessHandler(function () { APP.editingStudentId = null; resetStudentForm(); refreshAll(); toast('Student updated'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).updateStudent(data);
-    } else {
-      if (APP.students.some(function (s) { return s.studentId === data.studentId; })) { toast('Duplicate Student ID'); showLoading(false); return; }
-      google.script.run.withSuccessHandler(function () { resetStudentForm(); refreshAll(); toast('Student added'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addStudent(data);
-    }
-  });
-  document.getElementById('sf-cancel-btn').addEventListener('click', function () { APP.editingStudentId = null; resetStudentForm(); });
-  document.getElementById('roster-acc-filter').addEventListener('change', renderStudentTable);
-}
-
-function readStudentForm() {
-  return {
-    studentId: document.getElementById('sf-id').value.trim(), name: document.getElementById('sf-name').value.trim(),
-    grade: document.getElementById('sf-grade').value, smallGroup: document.getElementById('sf-smallgroup').checked,
-    readAloud: document.getElementById('sf-readaloud').checked, oneToOne: document.getElementById('sf-onetoone').checked,
-    proximity: document.getElementById('sf-proximity').checked, prompting: document.getElementById('sf-prompting').checked,
-    otherAccommodations: document.getElementById('sf-other').value.trim()
+  // =========================================================================
+  // State
+  // =========================================================================
+  var APP = {
+    students: [], teachers: [], rooms: [], assignments: [],
+    stagingGroups: [], templates: [], fillerCells: [],
+    editingStudentId: null, editingTeacherId: null,
+    selectedRoom: null,
+    gradeFilter: '',
+    floorFilter: '',
+    fillerMode: false,
+    // Designer state
+    designerRooms: [],
+    designerSelectedId: null,
+    designerFloor: '1',
+    designerFloorView: '',
+    designerTool: 'classroom',
+    designerLayouts: [],
+    backups: [],
+    designerZoom: 1.0,
+    _drawing: false, _drawStart: null,
+    _dragging: false, _dragRoom: null, _dragStart: null, _dragOriginal: null,
+    _resizing: false, _resizeRoom: null, _resizeStart: null, _resizeOriginal: null
   };
-}
 
-function resetStudentForm() {
-  document.getElementById('student-form').reset();
-  document.getElementById('sf-id').disabled = false;
-  document.getElementById('sf-submit-btn').textContent = 'Add Student';
-  document.getElementById('sf-cancel-btn').style.display = 'none';
-}
+  var GRID = 30;
+  var CANVAS_COLS = 80;
+  var CANVAS_ROWS = 80;
 
-function editStudent(studentId) {
-  var s = APP.students.find(function (x) { return x.studentId === studentId; });
-  if (!s) return;
-  APP.editingStudentId = studentId;
-  document.getElementById('sf-id').value = s.studentId; document.getElementById('sf-id').disabled = true;
-  document.getElementById('sf-name').value = s.name; document.getElementById('sf-grade').value = s.grade;
-  document.getElementById('sf-smallgroup').checked = s.smallGroup; document.getElementById('sf-readaloud').checked = s.readAloud;
-  document.getElementById('sf-onetoone').checked = s.oneToOne; document.getElementById('sf-proximity').checked = s.proximity;
-  document.getElementById('sf-prompting').checked = s.prompting; document.getElementById('sf-other').value = s.otherAccommodations || '';
-  document.getElementById('sf-submit-btn').textContent = 'Save Changes'; document.getElementById('sf-cancel-btn').style.display = '';
-  document.getElementById('sf-name').focus();
-}
+  // Returns the effective pixel size of one grid unit at current zoom
+  function zg() { return GRID * APP.designerZoom; }
 
-function confirmDeleteStudent(studentId) {
-  if (!confirm('Delete student ' + studentId + '?')) return;
-  showLoading(true);
-  google.script.run.withSuccessHandler(function () { refreshAll(); toast('Student deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteStudent(studentId);
-}
+  var ROOM_TYPES = {
+    classroom: { label: 'Classroom', color: '#3b82f6', bg: '#dbeafe', icon: '\u{1F4DA}' },
+    office: { label: 'Office', color: '#64748b', bg: '#f1f5f9', icon: '\u{1F4BC}' },
+    library: { label: 'Library', color: '#d97706', bg: '#fef3c7', icon: '\u{1F4D6}' },
+    lab: { label: 'Science Lab', color: '#059669', bg: '#d1fae5', icon: '\u{1F52C}' },
+    gym: { label: 'Gymnasium', color: '#dc2626', bg: '#fee2e2', icon: '\u{1F3C0}' },
+    cafeteria: { label: 'Cafeteria', color: '#ea580c', bg: '#ffedd5', icon: '\u{1F372}' },
+    restroom: { label: 'Restroom', color: '#6b7280', bg: '#f3f4f6', icon: '\u{1F6BB}' },
+    hallway: { label: 'Hallway', color: '#9ca3af', bg: '#f9fafb', icon: '\u{1F6AA}' },
+    auditorium: { label: 'Auditorium', color: '#7c3aed', bg: '#ede9fe', icon: '\u{1F3B5}' },
+    storage: { label: 'Storage', color: '#92400e', bg: '#fef3c7', icon: '\u{1F4E6}' }
+  };
 
-function renderStudentTable() {
-  var accF = document.getElementById('roster-acc-filter').value;
-  var list = filterStudentsByGrade(APP.students);
-  if (accF) list = list.filter(function (s) { return s[accF]; });
-  document.getElementById('roster-count').textContent = list.length + ' student' + (list.length !== 1 ? 's' : '');
-  var tbody = document.querySelector('#student-table tbody');
-  tbody.innerHTML = '';
-  list.forEach(function (s) {
-    var tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td>' + esc(s.studentId) + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.grade) + '</td>' +
-      '<td>' + accomBadges(s) + '</td><td class="actions">' +
-      '<button class="btn btn--sm btn--secondary" onclick="editStudent(\'' + esc(s.studentId) + '\')">Edit</button> ' +
-      '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
-      '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button></td>';
-    tbody.appendChild(tr);
+  // =========================================================================
+  // Bootstrap
+  // =========================================================================
+  document.addEventListener('DOMContentLoaded', function () {
+    initGradeSwitcher();
+    initFloorSwitcher();
+    initNav();
+    initStudentForm();
+    initTeacherForm();
+    initRoomForm();
+    initStagingView();
+    initAssignView();
+    initTemplateView();
+    initAccomModal();
+    initDesigner();
+    initBackupView();
+    refreshAll();
   });
-}
 
-// =========================================================================
-// Teacher Form & Table
-// =========================================================================
-function initTeacherForm() {
-  document.getElementById('teacher-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var data = { teacherId: document.getElementById('tf-id').value.trim(), name: document.getElementById('tf-name').value.trim(),
-      roomNumber: document.getElementById('tf-room').value.trim(), hallway: document.getElementById('tf-hallway').value.trim(),
-      grade: document.getElementById('tf-grade').value };
-    if (!data.name || !data.teacherId) { toast('Teacher name and ID required'); return; }
-    showLoading(true);
-    if (APP.editingTeacherId) {
-      google.script.run.withSuccessHandler(function () { APP.editingTeacherId = null; resetTeacherForm(); refreshAll(); toast('Teacher updated'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).updateTeacher(data);
-    } else {
-      if (APP.teachers.some(function (t) { return t.teacherId === data.teacherId; })) { toast('Duplicate Teacher ID'); showLoading(false); return; }
-      google.script.run.withSuccessHandler(function () { resetTeacherForm(); refreshAll(); toast('Teacher added'); })
-        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addTeacher(data);
-    }
-  });
-  document.getElementById('tf-cancel-btn').addEventListener('click', function () { APP.editingTeacherId = null; resetTeacherForm(); });
-}
-
-function resetTeacherForm() {
-  document.getElementById('teacher-form').reset(); document.getElementById('tf-id').disabled = false;
-  document.getElementById('tf-submit-btn').textContent = 'Add Teacher'; document.getElementById('tf-cancel-btn').style.display = 'none';
-}
-
-function editTeacher(teacherId) {
-  var t = APP.teachers.find(function (x) { return x.teacherId === teacherId; }); if (!t) return;
-  APP.editingTeacherId = teacherId;
-  document.getElementById('tf-id').value = t.teacherId; document.getElementById('tf-id').disabled = true;
-  document.getElementById('tf-name').value = t.name; document.getElementById('tf-room').value = t.roomNumber;
-  document.getElementById('tf-hallway').value = t.hallway; document.getElementById('tf-grade').value = t.grade;
-  document.getElementById('tf-submit-btn').textContent = 'Save Changes'; document.getElementById('tf-cancel-btn').style.display = '';
-  document.getElementById('tf-name').focus();
-}
-
-function confirmDeleteTeacher(teacherId) {
-  if (!confirm('Delete teacher ' + teacherId + '?')) return;
-  showLoading(true);
-  google.script.run.withSuccessHandler(function () { refreshAll(); toast('Teacher deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteTeacher(teacherId);
-}
-
-function renderTeacherTable() {
-  var list = filterByGrade(APP.teachers);
-  document.getElementById('teacher-count').textContent = list.length + ' teacher' + (list.length !== 1 ? 's' : '');
-  var tbody = document.querySelector('#teacher-table tbody'); tbody.innerHTML = '';
-  list.forEach(function (t) {
-    var tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + esc(t.teacherId) + '</td><td>' + esc(t.name) + '</td><td>' + esc(t.roomNumber) + '</td>' +
-      '<td>' + esc(t.hallway) + '</td><td>' + (t.grade || 'Elective') + '</td><td class="actions">' +
-      '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
-      '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button></td>';
-    tbody.appendChild(tr);
-  });
-}
-
-// =========================================================================
-// Room Form & List
-// =========================================================================
-function populateTeacherDropdown() {
-  var sel = document.getElementById('rf-teacher'); var prev = sel.value;
-  sel.innerHTML = '<option value="">-- None --</option>';
-  APP.teachers.forEach(function (t) {
-    var opt = document.createElement('option'); opt.value = t.teacherId;
-    opt.textContent = t.name + (t.roomNumber ? ' (Rm ' + t.roomNumber + ')' : ''); sel.appendChild(opt);
-  });
-  if (prev) sel.value = prev;
-}
-
-function initRoomForm() {
-  document.getElementById('room-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var data = {
-      roomName: document.getElementById('rf-name').value.trim(), roomNumber: document.getElementById('rf-number').value.trim(),
-      hallway: document.getElementById('rf-hallway').value.trim(), rows: document.getElementById('rf-rows').value,
-      columns: document.getElementById('rf-cols').value, maxCapacity: document.getElementById('rf-cap').value,
-      teacherId: document.getElementById('rf-teacher').value, grade: document.getElementById('rf-grade').value,
-      floor: document.getElementById('rf-floor').value
-    };
-    if (!data.roomName) { toast('Room label required'); return; }
-    if (APP.rooms.some(function (r) { return r.roomName === data.roomName; })) { toast('Duplicate room name'); return; }
-    showLoading(true);
-    google.script.run.withSuccessHandler(function () { document.getElementById('room-form').reset(); refreshAll(); toast('Room added'); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).addRoom(data);
-  });
-}
-
-function renderRoomList() {
-  var container = document.getElementById('room-list'); container.innerHTML = '';
-  var list = filterRooms(APP.rooms);
-  document.getElementById('room-count').textContent = list.length + ' room' + (list.length !== 1 ? 's' : '');
-  if (!list.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
-
-  // Group by floor, then hallway
-  var byFloor = {};
-  list.forEach(function (r) { var fl = r.floor || '1'; if (!byFloor[fl]) byFloor[fl] = []; byFloor[fl].push(r); });
-
-  ['1', '2'].forEach(function (fl) {
-    if (!byFloor[fl]) return;
-    var floorDiv = document.createElement('div');
-    floorDiv.innerHTML = '<h3 class="floor-header">Floor ' + fl + '</h3>';
-
-    var hallways = {};
-    byFloor[fl].forEach(function (r) { var hw = r.hallway || 'Other'; if (!hallways[hw]) hallways[hw] = []; hallways[hw].push(r); });
-
-    Object.keys(hallways).sort().forEach(function (hw) {
-      var section = document.createElement('div'); section.className = 'hallway-section';
-      section.innerHTML = '<h4 class="hallway-header">' + esc(hw) + '</h4>';
-      var grid = document.createElement('div'); grid.className = 'room-cards';
-      hallways[hw].forEach(function (r) {
-        var teacher = APP.teachers.find(function (t) { return t.teacherId === r.teacherId; });
-        var div = document.createElement('div'); div.className = 'room-card';
-        var cap = r.maxCapacity || (r.rows * r.columns);
-        div.innerHTML = '<h3>' + esc(r.roomName) + (r.roomNumber ? ' <span class="room-num">Rm ' + esc(r.roomNumber) + '</span>' : '') + '</h3>' +
-          '<p>' + r.rows + ' &times; ' + r.columns + ' &mdash; cap ' + cap + '</p>' +
-          (teacher ? '<p class="room-teacher">' + esc(teacher.name) + '</p>' : '') +
-          (r.grade ? '<span class="badge badge--grade">Gr ' + esc(r.grade) + '</span> ' : '') +
-          '<span class="badge badge--floor">F' + esc(r.floor || '1') + '</span> ' +
-          '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
-        grid.appendChild(div);
-      });
-      section.appendChild(grid); floorDiv.appendChild(section);
-    });
-    container.appendChild(floorDiv);
-  });
-}
-
-function confirmDeleteRoom(name) {
-  if (!confirm('Delete room "' + name + '" and its assignments?')) return;
-  showLoading(true);
-  google.script.run.withSuccessHandler(function () { refreshAll(); toast('Room deleted'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).deleteRoom(name);
-}
-
-// =========================================================================
-// Staging Ground
-// =========================================================================
-function initStagingView() {
-  var createBtn = document.getElementById('btn-create-group');
-  createBtn.addEventListener('click', function () {
-    var name = document.getElementById('new-group-name').value.trim();
-    if (!name) { toast('Enter a group name'); return; }
-    disableBtn(createBtn, 'Creating...');
-    google.script.run.withSuccessHandler(function () {
-      document.getElementById('new-group-name').value = '';
-      enableBtn(createBtn);
-      refreshAll(true);
-      toast('Group created');
-    }).withFailureHandler(function (e) {
-      toast('Error: ' + e.message);
-      enableBtn(createBtn);
-    }).createStagingGroup(name);
-  });
-  document.getElementById('staging-acc-filter').addEventListener('change', renderStagingView);
-
-  // Event delegation for staging group buttons (set up ONCE here, not in renderStagingGroups)
-  var container = document.getElementById('staging-groups-container');
-  container.addEventListener('click', function (e) {
-    var removeBtn = e.target.closest('.btn-remove-staged');
-    var deleteBtn = e.target.closest('.btn-delete-group');
-    var placeBtn = e.target.closest('.btn-place-group');
-    var editBtn = e.target.closest('.btn-edit-accom');
-
-    if (removeBtn) {
-      var gid = removeBtn.dataset.groupId;
-      var sid = removeBtn.dataset.studentId;
-      // Optimistic local update
-      var group = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
-      if (group) {
-        group.studentIds = group.studentIds.filter(function (id) { return id !== sid; });
-        renderStagingView();
-        toast('Removed from group');
-      }
-      google.script.run.withSuccessHandler(function () {})
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
-        .removeStudentFromStagingGroup(gid, sid);
-      return;
-    }
-
-    if (deleteBtn) {
-      var gid = deleteBtn.dataset.groupId;
-      if (!confirm('Delete this staging group?')) return;
-      // Optimistic local update
-      APP.stagingGroups = APP.stagingGroups.filter(function (g) { return g.groupId !== gid; });
-      renderStagingView();
-      toast('Group deleted');
-      google.script.run.withSuccessHandler(function () {})
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
-        .deleteStagingGroup(gid);
-      return;
-    }
-
-    if (placeBtn) {
-      var gid = placeBtn.dataset.groupId;
-      var roomSel = container.querySelector('.staging-room-select[data-group-id="' + gid + '"]');
-      var roomName = roomSel ? roomSel.value : '';
-      if (!roomName) { toast('Select a room first'); return; }
-      disableBtn(placeBtn, 'Placing...');
-      showLoading(true);
-      google.script.run.withSuccessHandler(function (res) {
-        refreshAll();
-        toast(res.message || 'Group placed');
-      }).withFailureHandler(function (err) {
-        toast('Error: ' + err.message);
-        showLoading(false);
-        enableBtn(placeBtn);
-      }).placeStagingGroupInRoom(gid, roomName);
-      return;
-    }
-
-    if (editBtn) {
-      openAccomModal(editBtn.dataset.studentId);
-    }
-  });
-}
-
-function renderStagingView() { renderStagingStudentList(); renderStagingGroups(); }
-
-function renderStagingStudentList() {
-  var accF = document.getElementById('staging-acc-filter').value;
-  var stagedIds = {};
-  APP.stagingGroups.forEach(function (g) { g.studentIds.forEach(function (sid) { stagedIds[sid] = true; }); });
-  var list = filterStudentsByGrade(APP.students).filter(function (s) {
-    if (stagedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
-  });
-  var ul = document.getElementById('staging-student-list'); ul.innerHTML = '';
-  if (!list.length) { ul.innerHTML = '<li class="muted">No available students.</li>'; return; }
-  list.forEach(function (s) {
-    var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
-    li.dataset.studentId = s.studentId;
-    li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>';
-    li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', 'stage:' + s.studentId); li.classList.add('dragging'); });
-    li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
-    ul.appendChild(li);
-  });
-}
-
-function renderStagingGroups() {
-  var container = document.getElementById('staging-groups-container'); container.innerHTML = '';
-  if (!APP.stagingGroups.length) { container.innerHTML = '<p class="muted">No staging groups yet. Create one above.</p>'; return; }
-  APP.stagingGroups.forEach(function (group) {
-    var div = document.createElement('div'); div.className = 'staging-group';
-    var memberCount = group.studentIds.filter(function (id) { return id; }).length;
-    var header = document.createElement('div'); header.className = 'staging-group__header';
-    header.innerHTML = '<h3>' + esc(group.groupName) + ' <span class="count-badge">' + memberCount + '</span></h3>' +
-      '<div class="staging-group__actions"><select class="staging-room-select" data-group-id="' + esc(group.groupId) + '"><option value="">Place in room...</option></select>' +
-      '<button class="btn btn--sm btn--accent btn-place-group" data-group-id="' + esc(group.groupId) + '">Place</button> ' +
-      '<button class="btn btn--sm btn--danger btn-delete-group" data-group-id="' + esc(group.groupId) + '">Delete</button></div>';
-    div.appendChild(header);
-    var roomSel = header.querySelector('.staging-room-select');
-    filterRooms(APP.rooms).forEach(function (r) {
-      var opt = document.createElement('option'); opt.value = r.roomName;
-      opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : ''); roomSel.appendChild(opt);
-    });
-    var dropZone = document.createElement('div'); dropZone.className = 'staging-group__members'; dropZone.dataset.groupId = group.groupId;
-    dropZone.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
-    dropZone.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
-    dropZone.addEventListener('drop', function (e) {
-      e.preventDefault(); this.classList.remove('drag-over');
-      var payload = e.dataTransfer.getData('text/plain'); if (!payload.startsWith('stage:')) return;
-      var sid = payload.replace('stage:', ''); var gid = this.dataset.groupId;
-      // Optimistic local update — no loading overlay
-      var grp = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
-      if (grp && grp.studentIds.indexOf(sid) === -1) {
-        grp.studentIds.push(sid);
-        renderStagingView();
-        toast('Student added to group');
-      }
-      // Silent server sync
-      google.script.run.withSuccessHandler(function () {})
-        .withFailureHandler(function (err) { toast('Error saving: ' + err.message); refreshAll(true); })
-        .addStudentToStagingGroup(gid, sid);
-    });
-    if (!memberCount) { dropZone.innerHTML = '<p class="muted">Drag students here</p>'; }
-    else {
-      group.studentIds.forEach(function (sid) {
-        if (!sid) return;
-        var s = APP.students.find(function (x) { return x.studentId === sid; }); if (!s) return;
-        var chip = document.createElement('div'); chip.className = 'student-chip student-chip--staged';
-        chip.innerHTML = '<strong>' + esc(s.name) + '</strong> ' + accomBadges(s) +
-          ' <button class="btn btn--sm btn--danger btn-remove-staged" data-group-id="' + esc(group.groupId) + '" data-student-id="' + esc(sid) + '">&times;</button>' +
-          ' <button class="btn btn--sm btn--secondary btn-edit-accom" data-student-id="' + esc(sid) + '">IEP</button>';
-        dropZone.appendChild(chip);
-      });
-    }
-    div.appendChild(dropZone); container.appendChild(div);
-  });
-  // NOTE: Click delegation is in initStagingView(), not here — avoids duplicate listeners
-}
-
-// =========================================================================
-// Assignment View
-// =========================================================================
-function initAssignView() {
-  document.getElementById('grid-room-select').addEventListener('change', function () { APP.selectedRoom = this.value; renderGrid(); });
-  document.getElementById('assign-acc-filter').addEventListener('change', renderUnassignedList);
-  document.getElementById('btn-auto-suggest').addEventListener('click', function () { runAutoSuggest(this); });
-  document.getElementById('btn-finalize').addEventListener('click', function () { runFinalize(this); });
-  document.getElementById('filler-mode').addEventListener('change', function () { APP.fillerMode = this.checked; renderGrid(); });
-  document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf', this); });
-  document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word', this); });
-}
-
-function renderAssignView() {
-  var sel = document.getElementById('grid-room-select'); var prev = sel.value; sel.innerHTML = '';
-  var filteredRooms = filterRooms(APP.rooms);
-  filteredRooms.forEach(function (r) {
-    var opt = document.createElement('option'); opt.value = r.roomName;
-    opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : '') + ' F' + (r.floor || '1');
-    sel.appendChild(opt);
-  });
-  if (prev && filteredRooms.some(function (r) { return r.roomName === prev; })) sel.value = prev;
-  APP.selectedRoom = sel.value;
-  renderUnassignedList(); renderGrid();
-}
-
-function renderUnassignedList() {
-  var accF = document.getElementById('assign-acc-filter').value;
-  var assignedIds = {}; APP.assignments.forEach(function (a) { assignedIds[a.studentId] = true; });
-  var list = filterStudentsByGrade(APP.students).filter(function (s) {
-    if (assignedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
-  });
-  var ul = document.getElementById('unassigned-list'); ul.innerHTML = '';
-  if (!list.length) { ul.innerHTML = '<li class="muted">No unassigned students match filters.</li>'; return; }
-  list.forEach(function (s) {
-    var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
-    li.dataset.studentId = s.studentId;
-    li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>' +
-      ' <button class="btn btn--sm btn--secondary btn-inline-accom" data-student-id="' + esc(s.studentId) + '">IEP</button>';
-    li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', s.studentId); li.classList.add('dragging'); });
-    li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
-    ul.appendChild(li);
-  });
-  ul.addEventListener('click', function (e) {
-    if (e.target.classList.contains('btn-inline-accom')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
-  });
-}
-
-// ---------- Room Grid ----------
-
-function renderGrid() {
-  var container = document.getElementById('grid-container');
-  var warnings = document.getElementById('grid-warnings');
-  var infoBar = document.getElementById('grid-room-info');
-  container.innerHTML = ''; warnings.innerHTML = ''; infoBar.innerHTML = '';
-
-  var room = APP.rooms.find(function (r) { return r.roomName === APP.selectedRoom; });
-  if (!room) { container.innerHTML = '<p class="muted">Select a room.</p>'; return; }
-
-  var teacher = APP.teachers.find(function (t) { return t.teacherId === room.teacherId; });
-  var infoParts = [];
-  if (room.roomNumber) infoParts.push('Room ' + room.roomNumber);
-  if (room.hallway) infoParts.push(room.hallway);
-  if (room.floor) infoParts.push('Floor ' + room.floor);
-  if (teacher) infoParts.push('Teacher: ' + teacher.name);
-  if (room.grade) infoParts.push('Grade ' + room.grade);
-  var cap = room.maxCapacity || (room.rows * room.columns);
-  var fillerCount = APP.fillerCells.filter(function (f) { return f.roomName === room.roomName; }).length;
-  infoParts.push('Capacity: ' + (cap - fillerCount) + ' (' + fillerCount + ' blocked)');
-  infoBar.innerHTML = infoParts.map(function (p) { return '<span class="info-chip">' + esc(p) + '</span>'; }).join(' ');
-
-  var seatMap = {};
-  var roomAssignments = APP.assignments.filter(function (a) { return a.roomName === room.roomName; });
-  roomAssignments.forEach(function (a) { seatMap[a.row + ',' + a.column] = a; });
-
-  container.style.gridTemplateColumns = 'repeat(' + room.columns + ', 1fr)';
-
-  for (var r = 1; r <= room.rows; r++) {
-    for (var c = 1; c <= room.columns; c++) {
-      var cell = document.createElement('div');
-      cell.className = 'grid-cell';
-      cell.dataset.row = r; cell.dataset.col = c;
-      var key = r + ',' + c;
-      var isFiller = isFillerCell(room.roomName, r, c);
-      var a = seatMap[key];
-
-      if (isFiller && !a) {
-        // Filler / blocked cell
-        cell.classList.add('filler');
-        cell.innerHTML = '<span class="cell-filler-icon">X</span>';
-        // Click to toggle filler off
-        (function (row, col) {
-          cell.addEventListener('click', function () {
-            if (!APP.fillerMode) return;
-            showLoading(true);
-            google.script.run.withSuccessHandler(function (res) {
-              APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
-              if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
-              renderGrid(); showLoading(false);
-            }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-              .toggleFillerCell(APP.selectedRoom, row, col);
-          });
-        })(r, c);
-      } else if (a) {
-        var student = APP.students.find(function (s) { return s.studentId === a.studentId; });
-        if (student) {
-          cell.classList.add('occupied');
-          if (student.readAloud) cell.classList.add('read-aloud');
-          cell.innerHTML = '<span class="cell-name">' + esc(student.name) + '</span>' +
-            '<span class="cell-codes">' + accomBadges(student) + '</span>' +
-            '<button class="btn btn--sm btn--secondary cell-iep-btn" data-student-id="' + esc(student.studentId) + '">IEP</button>';
-          if (student.proximity && r > 2) cell.classList.add('warn-proximity');
-          cell.setAttribute('draggable', 'true');
-          (function (sid) {
-            cell.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', sid); cell.classList.add('dragging'); });
-            cell.addEventListener('dragend', function () { cell.classList.remove('dragging'); });
-          })(student.studentId);
-          (function (sid) {
-            cell.addEventListener('dblclick', function () {
-              if (!confirm('Unassign this student?')) return; showLoading(true);
-              google.script.run.withSuccessHandler(function () {
-                APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== sid; });
-                renderAssignView(); showLoading(false); toast('Student unassigned');
-              }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).removeAssignment(sid);
-            });
-          })(student.studentId);
-        }
-      } else {
-        // Empty cell
-        cell.innerHTML = '<span class="cell-label">R' + r + 'C' + c + '</span>';
-        // In filler mode, click to toggle filler
-        (function (row, col) {
-          cell.addEventListener('click', function () {
-            if (!APP.fillerMode) return;
-            showLoading(true);
-            google.script.run.withSuccessHandler(function (res) {
-              APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
-              if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
-              renderGrid(); showLoading(false);
-            }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
-              .toggleFillerCell(APP.selectedRoom, row, col);
-          });
-        })(r, c);
-      }
-
-      // Drop handlers (only on non-filler cells)
-      if (!isFiller) {
-        cell.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
-        cell.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
-        (function (row, col) {
-          cell.addEventListener('drop', function (e) {
-            e.preventDefault(); this.classList.remove('drag-over');
-            var studentId = e.dataTransfer.getData('text/plain');
-            if (!studentId || studentId.startsWith('stage:')) return;
-            var existing = seatMap[row + ',' + col];
-            if (existing && existing.studentId !== studentId) { toast('Seat occupied — double-click to unassign first.'); return; }
-            showLoading(true);
-            google.script.run.withSuccessHandler(function () {
-              APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== studentId; });
-              APP.assignments.push({ studentId: studentId, roomName: APP.selectedRoom, row: row, column: col });
-              renderAssignView(); showLoading(false); toast('Student placed');
-            }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
-              .saveAssignment(studentId, APP.selectedRoom, row, col);
-          });
-        })(r, c);
-      }
-
-      container.appendChild(cell);
-    }
+  function refreshAll(quiet) {
+    if (!quiet) showLoading(true);
+    var pending = 7;
+    function done() { pending--; if (pending <= 0) { renderAll(); if (!quiet) showLoading(false); } }
+    google.script.run.withSuccessHandler(function (d) { APP.students = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:students'); done(); }).getStudents();
+    google.script.run.withSuccessHandler(function (d) { APP.teachers = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:teachers'); done(); }).getTeachers();
+    google.script.run.withSuccessHandler(function (d) { APP.rooms = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:rooms'); done(); }).getRooms();
+    google.script.run.withSuccessHandler(function (d) { APP.assignments = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:assignments'); done(); }).getAssignments();
+    google.script.run.withSuccessHandler(function (d) { APP.stagingGroups = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:staging'); done(); }).getStagingGroups();
+    google.script.run.withSuccessHandler(function (d) { APP.templates = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:templates'); done(); }).getTemplates();
+    google.script.run.withSuccessHandler(function (d) { APP.fillerCells = d || []; done(); }).withFailureHandler(function (e) { handleError(e, 'refreshAll:filler'); done(); }).getFillerCells();
   }
 
-  container.addEventListener('click', function (e) {
-    if (e.target.classList.contains('cell-iep-btn')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
-  });
-
-  // Warnings
-  var warnMsgs = [];
-  var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
-  if (roomAssignments.length > sgLimit) {
-    var hasSG = roomAssignments.some(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.smallGroup; });
-    if (hasSG) warnMsgs.push('Warning: Room has ' + roomAssignments.length + ' students with Small Group students (limit ' + sgLimit + ').');
+  function renderAll() {
+    renderStudentTable(); renderTeacherTable(); renderRoomList();
+    populateTeacherDropdown(); renderStagingView(); renderAssignView(); renderTemplateList();
   }
-  var oto = roomAssignments.filter(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.oneToOne; });
-  if (oto.length && roomAssignments.length > 1) warnMsgs.push('Warning: 1:1 Testing student present but room has multiple students.');
-  warnings.innerHTML = warnMsgs.map(function (m) { return '<p class="warn">' + m + '</p>'; }).join('');
-}
 
-function runAutoSuggest(triggerBtn) {
-  if (!APP.rooms.length) { toast('Create rooms first'); return; }
-  if (!APP.students.length) { toast('Add students first'); return; }
-  var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
-  var gradeF = APP.gradeFilter || null;
-  disableBtn(triggerBtn, 'Suggesting...');
-  showLoading(true);
-  google.script.run.withSuccessHandler(function (result) {
-    if (result.error) { toast(result.error); showLoading(false); enableBtn(triggerBtn); return; }
-    google.script.run.withSuccessHandler(function () {
-      APP.assignments = result; renderAssignView(); showLoading(false); enableBtn(triggerBtn);
-      toast('Auto-suggest: ' + result.length + ' placements' + (gradeF ? ' (Gr ' + gradeF + ')' : ''));
-    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).applyRecommendations(result);
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateRecommendations(sgLimit, gradeF);
-}
-
-function runFinalize(triggerBtn) {
-  if (!APP.assignments.length) { toast('No assignments to finalize'); return; }
-  if (!confirm('Generate finalized layout sheets in the spreadsheet?')) return;
-  disableBtn(triggerBtn, 'Finalizing...');
-  showLoading(true);
-  google.script.run.withSuccessHandler(function (res) { showLoading(false); enableBtn(triggerBtn); toast(res.message || 'Layout finalized'); })
-    .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).finalizeLayout();
-}
-
-// ---------- Export PDF / Word ----------
-
-function runExport(format, triggerBtn) {
-  if (!APP.assignments.length) { toast('No assignments to export'); return; }
-  disableBtn(triggerBtn, 'Exporting...');
-  showLoading(true);
-  google.script.run.withSuccessHandler(function (htmlContent) {
-    showLoading(false); enableBtn(triggerBtn);
-    if (format === 'word') {
-      // Word (.doc) can be generated from HTML with mso namespace
-      var wordHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
-        '<head><meta charset="utf-8"><title>Testing Assignments</title></head><body>' +
-        htmlContent.replace(/<!DOCTYPE html>.*?<body>/s, '').replace(/<\/body><\/html>/, '') +
-        '</body></html>';
-      var blob = new Blob([wordHtml], { type: 'application/msword' });
-      var link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'Testing_Assignments.doc';
-      link.click();
-      URL.revokeObjectURL(link.href);
-      toast('Word document downloaded');
-    } else {
-      // PDF via print dialog
-      var win = window.open('', '_blank');
-      if (win) {
-        win.document.write(htmlContent);
-        win.document.close();
-        win.focus();
-        setTimeout(function () { win.print(); }, 500);
-        toast('Print dialog opened — save as PDF');
-      } else {
-        toast('Pop-up blocked — allow pop-ups for this site');
-      }
-    }
-  }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateExportHTML();
-}
-
-// =========================================================================
-// Templates
-// =========================================================================
-function initTemplateView() {
-  var saveBtn = document.getElementById('btn-save-template');
-  saveBtn.addEventListener('click', function () {
-    var name = document.getElementById('tpl-name').value.trim();
-    if (!name) { toast('Enter a template name'); return; }
-    disableBtn(saveBtn, 'Saving...');
-    showLoading(true);
-    google.script.run.withSuccessHandler(function (res) { document.getElementById('tpl-name').value = ''; enableBtn(saveBtn); refreshAll(); toast(res.message); })
-      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(saveBtn); }).saveTemplate(name);
-  });
-}
-
-function renderTemplateList() {
-  var container = document.getElementById('template-list'); container.innerHTML = '';
-  if (!APP.templates.length) { container.innerHTML = '<p class="muted">No saved templates.</p>'; return; }
-  APP.templates.forEach(function (tpl) {
-    var div = document.createElement('div'); div.className = 'template-card';
-    var d = tpl.data || {};
-    div.innerHTML = '<h3>' + esc(tpl.templateName) + '</h3>' +
-      '<p class="muted">' + (d.teachers || []).length + ' teacher(s), ' + (d.rooms || []).length + ' room(s)</p>' +
-      '<button class="btn btn--sm btn--primary btn-load-tpl" data-name="' + esc(tpl.templateName) + '">Load</button> ' +
-      '<button class="btn btn--sm btn--danger btn-delete-tpl" data-name="' + esc(tpl.templateName) + '">Delete</button>';
-    container.appendChild(div);
-  });
-  container.addEventListener('click', function (e) {
-    if (e.target.classList.contains('btn-load-tpl')) {
-      var name = e.target.dataset.name;
-      if (!confirm('Load "' + name + '"? Replaces current teachers and rooms.')) return;
-      showLoading(true);
-      google.script.run.withSuccessHandler(function (res) { refreshAll(); toast(res.message); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).loadTemplate(name);
-    }
-    if (e.target.classList.contains('btn-delete-tpl')) {
-      if (!confirm('Delete "' + e.target.dataset.name + '"?')) return;
-      showLoading(true);
-      google.script.run.withSuccessHandler(function () { refreshAll(); toast('Template deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).deleteTemplate(e.target.dataset.name);
-    }
-  });
-}
-
-// =========================================================================
-// Utility
-// =========================================================================
-function esc(str) { var d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
-
-function accomBadges(s) {
-  var b = [];
-  if (s.smallGroup) b.push('<span class="badge badge--sg">SG</span>');
-  if (s.readAloud) b.push('<span class="badge badge--ra">RA</span>');
-  if (s.oneToOne) b.push('<span class="badge badge--11">1:1</span>');
-  if (s.proximity) b.push('<span class="badge badge--prox">PROX</span>');
-  if (s.prompting) b.push('<span class="badge badge--pmpt">PMPT</span>');
-  if (s.otherAccommodations) b.push('<span class="badge badge--other">' + esc(s.otherAccommodations) + '</span>');
-  return b.join(' ');
-}
-
-function toast(msg) {
-  var el = document.getElementById('toast'); el.textContent = msg; el.classList.remove('hidden');
-  clearTimeout(el._timer); el._timer = setTimeout(function () { el.classList.add('hidden'); }, 4000);
-}
-
-function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
-
-function disableBtn(btn, busyText) {
-  if (!btn) return;
-  btn.disabled = true;
-  btn._origText = btn.textContent;
-  if (busyText) btn.textContent = busyText;
-}
-function enableBtn(btn) {
-  if (!btn) return;
-  btn.disabled = false;
-  if (btn._origText) { btn.textContent = btn._origText; delete btn._origText; }
-}
-
-// =========================================================================
-// School Layout Designer (Drawing Tool)
-// =========================================================================
-
-function initDesigner() {
-  // Build palette
-  var palette = document.getElementById('designer-palette');
-  Object.keys(ROOM_TYPES).forEach(function (key) {
-    var t = ROOM_TYPES[key];
-    var btn = document.createElement('button');
-    btn.className = 'palette-btn' + (key === APP.designerTool ? ' active' : '');
-    btn.dataset.type = key;
-    btn.innerHTML = '<span class="palette-swatch" style="background:' + t.color + '"></span><span class="palette-icon">' + t.icon + '</span>' + t.label;
-    btn.addEventListener('click', function () {
-      palette.querySelectorAll('.palette-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      APP.designerTool = key;
+  // =========================================================================
+  // Grade & Floor Switchers
+  // =========================================================================
+  function initGradeSwitcher() {
+    document.querySelectorAll('.grade-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.grade-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        APP.gradeFilter = btn.dataset.grade;
+        renderAll();
+      });
     });
-    palette.appendChild(btn);
-  });
+  }
 
-  // Floor view selector (Both / Floor 1 / Floor 2)
-  document.querySelectorAll('.designer-floor-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      APP.designerFloorView = btn.dataset.dfloor;
-      if (btn.dataset.dfloor) APP.designerFloor = btn.dataset.dfloor;
-      renderDesignerCanvas();
-      toast(btn.dataset.dfloor ? 'Viewing Floor ' + btn.dataset.dfloor + ' — new rooms on Floor ' + btn.dataset.dfloor : 'Viewing both floors');
+  function initFloorSwitcher() {
+    document.querySelectorAll('.floor-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.floor-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        APP.floorFilter = btn.dataset.floor;
+        renderAll();
+      });
     });
-  });
+  }
 
-  // Canvas setup
-  var canvas = document.getElementById('designer-canvas');
-  canvas.style.width = (CANVAS_COLS * zg()) + 'px';
-  canvas.style.height = (CANVAS_ROWS * zg()) + 'px';
+  function filterByGrade(arr, gradeKey) {
+    gradeKey = gradeKey || 'grade';
+    if (!APP.gradeFilter) return arr;
+    return arr.filter(function (item) { var g = item[gradeKey]; return !g || String(g) === String(APP.gradeFilter); });
+  }
 
-  var preview = document.createElement('div');
-  preview.id = 'draw-preview';
-  preview.className = 'designer-preview hidden';
-  canvas.appendChild(preview);
+  function filterByFloor(arr) {
+    if (!APP.floorFilter) return arr;
+    return arr.filter(function (item) { return !item.floor || String(item.floor) === String(APP.floorFilter); });
+  }
 
-  canvas.addEventListener('mousedown', onCanvasMouseDown);
-  document.addEventListener('mousemove', onCanvasMouseMove);
-  document.addEventListener('mouseup', onCanvasMouseUp);
+  function filterRooms(arr) {
+    var result = filterByGrade(arr);
+    return filterByFloor(result);
+  }
 
-  // Ctrl+scroll to zoom
-  var scrollEl = document.querySelector('.designer-canvas-scroll');
-  scrollEl.addEventListener('wheel', function (e) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    var delta = e.deltaY < 0 ? 0.1 : -0.1;
-    applyDesignerZoom(Math.round((APP.designerZoom + delta) * 100) / 100);
-  }, { passive: false });
+  function filterStudentsByGrade(arr) {
+    if (!APP.gradeFilter) return arr;
+    return arr.filter(function (s) { return String(s.grade) === String(APP.gradeFilter); });
+  }
 
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Delete' && APP.designerSelectedId) {
-      deleteDesignerRoom(APP.designerSelectedId);
-    }
-  });
+  function isFillerCell(roomName, row, col) {
+    return APP.fillerCells.some(function (f) {
+      return f.roomName === roomName && f.row === row && f.column === col;
+    });
+  }
 
-  // Action buttons
-  var importBtn = document.getElementById('btn-import-rooms');
-  importBtn.addEventListener('click', function () {
-    importDesignerToRooms(importBtn);
-  });
-  var clearBtn = document.getElementById('btn-clear-designer');
-  clearBtn.addEventListener('click', function () {
-    if (!APP.designerRooms.length || confirm('Clear all rooms from the canvas?')) {
-      APP.designerRooms = [];
-      APP.designerSelectedId = null;
-      renderDesignerCanvas();
-      renderDesignerProps();
-      toast('Canvas cleared');
-    }
-  });
-
-  // Zoom controls
-  document.getElementById('btn-zoom-in').addEventListener('click', function () {
-    applyDesignerZoom(Math.round((APP.designerZoom + 0.25) * 100) / 100);
-  });
-  document.getElementById('btn-zoom-out').addEventListener('click', function () {
-    applyDesignerZoom(Math.round((APP.designerZoom - 0.25) * 100) / 100);
-  });
-  document.getElementById('btn-zoom-reset').addEventListener('click', function () {
-    applyDesignerZoom(1.0);
-  });
-
-  // Export layout to JSON file
-  document.getElementById('btn-export-layout').addEventListener('click', function () {
-    if (!APP.designerRooms.length) { toast('No rooms on canvas to export'); return; }
-    var payload = JSON.stringify(APP.designerRooms, null, 2);
-    var blob = new Blob([payload], { type: 'application/json' });
-    var link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'school-layout.json';
-    link.click();
-    URL.revokeObjectURL(link.href);
-    toast('Layout exported to school-layout.json');
-  });
-
-  // Import layout from JSON file
-  var fileInput = document.getElementById('import-layout-file');
-  document.getElementById('btn-import-layout').addEventListener('click', function () {
-    fileInput.value = '';
-    fileInput.click();
-  });
-  fileInput.addEventListener('change', function () {
-    var file = fileInput.files[0];
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      try {
-        var rooms = JSON.parse(e.target.result);
-        if (!Array.isArray(rooms)) throw new Error('Expected an array of rooms');
-        // Validate basic structure
-        rooms.forEach(function (r) {
-          if (!r.id || !r.name || r.gridX === undefined) throw new Error('Invalid room data');
+  // =========================================================================
+  // Navigation
+  // =========================================================================
+  function initNav() {
+    document.querySelectorAll('.nav-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        document.querySelectorAll('.nav-btn').forEach(function (b) { b.classList.remove('active'); });
+        e.target.classList.add('active');
+        document.querySelectorAll('.view').forEach(function (v) {
+          v.classList.add('hidden');
+          v.style.animation = 'none'; // Reset animation
         });
-        if (APP.designerRooms.length && !confirm('Replace current canvas with imported layout (' + rooms.length + ' rooms)?')) return;
-        APP.designerRooms = rooms;
-        APP.designerSelectedId = null;
-        renderDesignerCanvas();
-        renderDesignerProps();
-        toast('Imported ' + rooms.length + ' rooms from ' + file.name);
-      } catch (err) {
-        toast('Import failed: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-  });
 
-  // Save layout button
-  var saveLayoutBtn = document.getElementById('btn-save-layout');
-  saveLayoutBtn.addEventListener('click', function () {
-    var name = document.getElementById('designer-layout-name').value.trim();
-    if (!name) { toast('Enter a layout name'); return; }
-    if (!APP.designerRooms.length) { toast('No rooms on canvas to save'); return; }
-    disableBtn(saveLayoutBtn, 'Saving...');
-    var json = JSON.stringify(APP.designerRooms);
-    google.script.run.withSuccessHandler(function (res) {
-      document.getElementById('designer-layout-name').value = '';
-      enableBtn(saveLayoutBtn);
-      refreshDesignerLayouts();
-      toast(res.message);
-    }).withFailureHandler(function (e) {
-      toast('Error: ' + e.message);
-      enableBtn(saveLayoutBtn);
-    }).saveDesignerLayout(name, json);
-  });
-}
+        var targetView = document.getElementById('view-' + e.target.dataset.view);
+        if (targetView) {
+          targetView.classList.remove('hidden');
+          // Trigger reflow to restart animation
+          void targetView.offsetWidth;
+          targetView.style.animation = 'fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+        }
 
-function snapGrid(px) { return Math.round(px / GRID); }
-
-function getCanvasCoords(e) {
-  var scrollEl = document.querySelector('.designer-canvas-scroll');
-  var rect = scrollEl.getBoundingClientRect();
-  return {
-    x: (e.clientX - rect.left + scrollEl.scrollLeft) / APP.designerZoom,
-    y: (e.clientY - rect.top + scrollEl.scrollTop) / APP.designerZoom
-  };
-}
-
-function onCanvasMouseDown(e) {
-  if (e.button !== 0) return;
-  var pos = getCanvasCoords(e);
-
-  // Check resize handle
-  if (e.target.classList.contains('resize-handle')) {
-    var roomId = e.target.parentElement.dataset.roomId;
-    var room = APP.designerRooms.find(function (r) { return r.id === roomId; });
-    if (room) {
-      APP._resizing = true;
-      APP._resizeRoom = roomId;
-      APP._resizeStart = pos;
-      APP._resizeOriginal = { gridX: room.gridX, gridY: room.gridY, gridW: room.gridW, gridH: room.gridH };
-      e.preventDefault(); e.stopPropagation();
-      return;
-    }
+        if (e.target.dataset.view === 'assign') renderAssignView();
+        if (e.target.dataset.view === 'staging') renderStagingView();
+        if (e.target.dataset.view === 'rooms') populateTeacherDropdown();
+        if (e.target.dataset.view === 'designer') refreshDesignerLayouts();
+        if (e.target.dataset.view === 'designer') renderDesignerList(); // Added from instruction
+        if (e.target.dataset.view === 'templates') refreshBackups();
+      });
+    });
   }
 
-  // Check room click
-  var roomEl = e.target.closest('.designer-room');
-  if (roomEl) {
-    var id = roomEl.dataset.roomId;
-    selectDesignerRoom(id);
-    var rm = APP.designerRooms.find(function (r) { return r.id === id; });
-    if (rm) {
-      APP._dragging = true;
-      APP._dragRoom = id;
-      APP._dragStart = pos;
-      APP._dragOriginal = { gridX: rm.gridX, gridY: rm.gridY };
-    }
-    e.preventDefault();
-    return;
-  }
-
-  // Start drawing on empty canvas
-  APP.designerSelectedId = null;
-  renderDesignerProps();
-  APP._drawing = true;
-  APP._drawStart = { gx: snapGrid(pos.x), gy: snapGrid(pos.y) };
-  e.preventDefault();
-}
-
-function onCanvasMouseMove(e) {
-  if (APP._drawing) {
-    var pos = getCanvasCoords(e);
-    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
-    var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
-    var left = Math.min(sx, gx), top = Math.min(sy, gy);
-    var w = Math.max(2, Math.abs(gx - sx)), h = Math.max(2, Math.abs(gy - sy));
-    var preview = document.getElementById('draw-preview');
-    preview.classList.remove('hidden');
-    preview.style.left = (left * zg()) + 'px';
-    preview.style.top = (top * zg()) + 'px';
-    preview.style.width = (w * zg()) + 'px';
-    preview.style.height = (h * zg()) + 'px';
-    return;
-  }
-
-  if (APP._dragging) {
-    var pos = getCanvasCoords(e);
-    var room = APP.designerRooms.find(function (r) { return r.id === APP._dragRoom; });
-    if (!room) return;
-    var dx = snapGrid(pos.x) - snapGrid(APP._dragStart.x);
-    var dy = snapGrid(pos.y) - snapGrid(APP._dragStart.y);
-    room.gridX = Math.max(0, APP._dragOriginal.gridX + dx);
-    room.gridY = Math.max(0, APP._dragOriginal.gridY + dy);
-    renderDesignerCanvas();
-    return;
-  }
-
-  if (APP._resizing) {
-    var pos = getCanvasCoords(e);
-    var room = APP.designerRooms.find(function (r) { return r.id === APP._resizeRoom; });
-    if (!room) return;
-    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
-    room.gridW = Math.max(2, gx - room.gridX);
-    room.gridH = Math.max(2, gy - room.gridY);
-    renderDesignerCanvas();
-    return;
-  }
-}
-
-function onCanvasMouseUp(e) {
-  if (APP._drawing) {
-    var pos = getCanvasCoords(e);
-    var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
-    var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
-    var left = Math.min(sx, gx), top = Math.min(sy, gy);
-    var w = Math.abs(gx - sx), h = Math.abs(gy - sy);
-    document.getElementById('draw-preview').classList.add('hidden');
-    APP._drawing = false;
-
-    if (w >= 2 && h >= 2) {
-      var type = APP.designerTool;
-      var info = ROOM_TYPES[type];
-      var count = APP.designerRooms.filter(function (r) { return r.type === type; }).length + 1;
-      var newFloor = APP.designerFloorView || APP.designerFloor || '1';
-      var newRoom = {
-        id: 'dr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-        name: info.label + ' ' + count,
-        type: type,
-        floor: newFloor,
-        hallway: '', roomNumber: '',
-        gridX: left, gridY: top, gridW: w, gridH: h,
-        capacity: Math.max(1, w * h)
+  // =========================================================================
+  // Accommodation Quick-Edit Modal
+  // =========================================================================
+  function initAccomModal() {
+    document.getElementById('am-cancel').addEventListener('click', closeAccomModal);
+    document.getElementById('am-save').addEventListener('click', function () {
+      var sid = document.getElementById('am-student-id').value;
+      var s = APP.students.find(function (x) { return x.studentId === sid; });
+      if (!s) return;
+      var data = {
+        studentId: sid, name: s.name, grade: s.grade,
+        smallGroup: document.getElementById('am-smallgroup').checked,
+        readAloud: document.getElementById('am-readaloud').checked,
+        oneToOne: document.getElementById('am-onetoone').checked,
+        proximity: document.getElementById('am-proximity').checked,
+        prompting: document.getElementById('am-prompting').checked,
+        otherAccommodations: document.getElementById('am-other').value.trim()
       };
-      APP.designerRooms.push(newRoom);
-      selectDesignerRoom(newRoom.id);
-      renderDesignerCanvas();
-      toast('Room "' + newRoom.name + '" created');
-    }
-    return;
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'updateStudent'); return; } closeAccomModal(); refreshAll(); toast('Accommodations updated'); })
+        .withFailureHandler(function (e) { handleError(e, 'updateStudent'); })
+        .updateStudent(data);
+    });
   }
-  APP._dragging = false;
-  APP._resizing = false;
-}
 
-function selectDesignerRoom(id) {
-  APP.designerSelectedId = id;
-  renderDesignerCanvas();
-  renderDesignerProps();
-}
+  function openAccomModal(studentId) {
+    var s = APP.students.find(function (x) { return x.studentId === studentId; });
+    if (!s) return;
+    document.getElementById('am-student-id').value = s.studentId;
+    document.getElementById('accom-modal-name').textContent = s.name + ' (' + s.studentId + ')';
+    document.getElementById('am-smallgroup').checked = s.smallGroup;
+    document.getElementById('am-readaloud').checked = s.readAloud;
+    document.getElementById('am-onetoone').checked = s.oneToOne;
+    document.getElementById('am-proximity').checked = s.proximity;
+    document.getElementById('am-prompting').checked = s.prompting;
+    document.getElementById('am-other').value = s.otherAccommodations || '';
+    document.getElementById('accom-modal').classList.remove('hidden');
+  }
 
-function deleteDesignerRoom(id) {
-  APP.designerRooms = APP.designerRooms.filter(function (r) { return r.id !== id; });
-  if (APP.designerSelectedId === id) APP.designerSelectedId = null;
-  renderDesignerCanvas();
-  renderDesignerProps();
-  toast('Room deleted');
-}
+  function closeAccomModal() { document.getElementById('accom-modal').classList.add('hidden'); }
 
-function applyDesignerZoom(newZoom) {
-  APP.designerZoom = Math.min(3.0, Math.max(0.25, newZoom));
-  var pct = Math.round(APP.designerZoom * 100);
-  var zoomLabel = document.getElementById('zoom-level');
-  if (zoomLabel) zoomLabel.textContent = pct + '%';
-  renderDesignerCanvas();
-}
+  // =========================================================================
+  // Student Form
+  // =========================================================================
+  function initStudentForm() {
+    document.getElementById('student-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var data = readStudentForm();
+      if (!data.name || !data.studentId || !data.grade) { toast('Fill all required fields'); return; }
+      showLoading(true);
+      if (APP.editingStudentId) {
+        google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'updateStudent'); return; } APP.editingStudentId = null; resetStudentForm(); refreshAll(); toast('Student updated'); })
+          .withFailureHandler(function (e) { handleError(e, 'updateStudent'); }).updateStudent(data);
+      } else {
+        if (APP.students.some(function (s) { return s.studentId === data.studentId; })) { toast('Duplicate Student ID'); showLoading(false); return; }
+        google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'addStudent'); return; } resetStudentForm(); refreshAll(); toast('Student added'); })
+          .withFailureHandler(function (e) { handleError(e, 'addStudent'); }).addStudent(data);
+      }
+    });
+    document.getElementById('sf-cancel-btn').addEventListener('click', function () { APP.editingStudentId = null; resetStudentForm(); });
+    document.getElementById('roster-acc-filter').addEventListener('change', renderStudentTable);
+  }
 
-function renderDesignerCanvas() {
-  var canvas = document.getElementById('designer-canvas');
-  // Update canvas size and grid pattern to match zoom
-  var gridPx = zg();
-  canvas.style.width = (CANVAS_COLS * gridPx) + 'px';
-  canvas.style.height = (CANVAS_ROWS * gridPx) + 'px';
-  canvas.style.backgroundSize = gridPx + 'px ' + gridPx + 'px';
-  // Preserve preview element
-  var preview = document.getElementById('draw-preview');
-  canvas.innerHTML = '';
-  if (preview) canvas.appendChild(preview);
-  else {
-    preview = document.createElement('div');
+  function readStudentForm() {
+    return {
+      studentId: document.getElementById('sf-id').value.trim(), name: document.getElementById('sf-name').value.trim(),
+      grade: document.getElementById('sf-grade').value, smallGroup: document.getElementById('sf-smallgroup').checked,
+      readAloud: document.getElementById('sf-readaloud').checked, oneToOne: document.getElementById('sf-onetoone').checked,
+      proximity: document.getElementById('sf-proximity').checked, prompting: document.getElementById('sf-prompting').checked,
+      otherAccommodations: document.getElementById('sf-other').value.trim()
+    };
+  }
+
+  function resetStudentForm() {
+    document.getElementById('student-form').reset();
+    document.getElementById('sf-id').disabled = false;
+    document.getElementById('sf-submit-btn').textContent = 'Add Student';
+    document.getElementById('sf-cancel-btn').style.display = 'none';
+  }
+
+  function editStudent(studentId) {
+    var s = APP.students.find(function (x) { return x.studentId === studentId; });
+    if (!s) return;
+    APP.editingStudentId = studentId;
+    document.getElementById('sf-id').value = s.studentId; document.getElementById('sf-id').disabled = true;
+    document.getElementById('sf-name').value = s.name; document.getElementById('sf-grade').value = s.grade;
+    document.getElementById('sf-smallgroup').checked = s.smallGroup; document.getElementById('sf-readaloud').checked = s.readAloud;
+    document.getElementById('sf-onetoone').checked = s.oneToOne; document.getElementById('sf-proximity').checked = s.proximity;
+    document.getElementById('sf-prompting').checked = s.prompting; document.getElementById('sf-other').value = s.otherAccommodations || '';
+    document.getElementById('sf-submit-btn').textContent = 'Save Changes'; document.getElementById('sf-cancel-btn').style.display = '';
+    document.getElementById('sf-name').focus();
+  }
+
+  function confirmDeleteStudent(studentId) {
+    if (!confirm('Delete student ' + studentId + '?')) return;
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'deleteStudent'); return; } refreshAll(); toast('Student deleted'); })
+      .withFailureHandler(function (e) { handleError(e, 'deleteStudent'); }).deleteStudent(studentId);
+  }
+
+  function renderStudentTable() {
+    var accF = document.getElementById('roster-acc-filter').value;
+    var list = filterStudentsByGrade(APP.students);
+    if (accF) list = list.filter(function (s) { return s[accF]; });
+    document.getElementById('roster-count').textContent = list.length + ' student' + (list.length !== 1 ? 's' : '');
+    var tbody = document.querySelector('#student-table tbody');
+    tbody.innerHTML = '';
+    list.forEach(function (s) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + esc(s.studentId) + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.grade) + '</td>' +
+        '<td>' + accomBadges(s) + '</td><td class="actions">' +
+        '<button class="btn btn--sm btn--secondary" onclick="editStudent(\'' + esc(s.studentId) + '\')">Edit</button> ' +
+        '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
+        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  // =========================================================================
+  // Teacher Form & Table
+  // =========================================================================
+  function initTeacherForm() {
+    document.getElementById('teacher-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var data = {
+        teacherId: document.getElementById('tf-id').value.trim(), name: document.getElementById('tf-name').value.trim(),
+        roomNumber: document.getElementById('tf-room').value.trim(), hallway: document.getElementById('tf-hallway').value.trim(),
+        grade: document.getElementById('tf-grade').value
+      };
+      if (!data.name || !data.teacherId) { toast('Teacher name and ID required'); return; }
+      showLoading(true);
+      if (APP.editingTeacherId) {
+        google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'updateTeacher'); return; } APP.editingTeacherId = null; resetTeacherForm(); refreshAll(); toast('Teacher updated'); })
+          .withFailureHandler(function (e) { handleError(e, 'updateTeacher'); }).updateTeacher(data);
+      } else {
+        if (APP.teachers.some(function (t) { return t.teacherId === data.teacherId; })) { toast('Duplicate Teacher ID'); showLoading(false); return; }
+        google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'addTeacher'); return; } resetTeacherForm(); refreshAll(); toast('Teacher added'); })
+          .withFailureHandler(function (e) { handleError(e, 'addTeacher'); }).addTeacher(data);
+      }
+    });
+    document.getElementById('tf-cancel-btn').addEventListener('click', function () { APP.editingTeacherId = null; resetTeacherForm(); });
+  }
+
+  function resetTeacherForm() {
+    document.getElementById('teacher-form').reset(); document.getElementById('tf-id').disabled = false;
+    document.getElementById('tf-submit-btn').textContent = 'Add Teacher'; document.getElementById('tf-cancel-btn').style.display = 'none';
+  }
+
+  function editTeacher(teacherId) {
+    var t = APP.teachers.find(function (x) { return x.teacherId === teacherId; }); if (!t) return;
+    APP.editingTeacherId = teacherId;
+    document.getElementById('tf-id').value = t.teacherId; document.getElementById('tf-id').disabled = true;
+    document.getElementById('tf-name').value = t.name; document.getElementById('tf-room').value = t.roomNumber;
+    document.getElementById('tf-hallway').value = t.hallway; document.getElementById('tf-grade').value = t.grade;
+    document.getElementById('tf-submit-btn').textContent = 'Save Changes'; document.getElementById('tf-cancel-btn').style.display = '';
+    document.getElementById('tf-name').focus();
+  }
+
+  function confirmDeleteTeacher(teacherId) {
+    if (!confirm('Delete teacher ' + teacherId + '?')) return;
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'deleteTeacher'); return; } refreshAll(); toast('Teacher deleted'); })
+      .withFailureHandler(function (e) { handleError(e, 'deleteTeacher'); }).deleteTeacher(teacherId);
+  }
+
+  function renderTeacherTable() {
+    var list = filterByGrade(APP.teachers);
+    document.getElementById('teacher-count').textContent = list.length + ' teacher' + (list.length !== 1 ? 's' : '');
+    var tbody = document.querySelector('#teacher-table tbody'); tbody.innerHTML = '';
+    list.forEach(function (t) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + esc(t.teacherId) + '</td><td>' + esc(t.name) + '</td><td>' + esc(t.roomNumber) + '</td>' +
+        '<td>' + esc(t.hallway) + '</td><td>' + (t.grade || 'Elective') + '</td><td class="actions">' +
+        '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
+        '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  // =========================================================================
+  // Room Form & List
+  // =========================================================================
+  function populateTeacherDropdown() {
+    var sel = document.getElementById('rf-teacher'); var prev = sel.value;
+    sel.innerHTML = '<option value="">-- None --</option>';
+    APP.teachers.forEach(function (t) {
+      var opt = document.createElement('option'); opt.value = t.teacherId;
+      opt.textContent = t.name + (t.roomNumber ? ' (Rm ' + t.roomNumber + ')' : ''); sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+  }
+
+  function initRoomForm() {
+    document.getElementById('room-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var data = {
+        roomName: document.getElementById('rf-name').value.trim(), roomNumber: document.getElementById('rf-number').value.trim(),
+        hallway: document.getElementById('rf-hallway').value.trim(), rows: document.getElementById('rf-rows').value,
+        columns: document.getElementById('rf-cols').value, maxCapacity: document.getElementById('rf-cap').value,
+        teacherId: document.getElementById('rf-teacher').value, grade: document.getElementById('rf-grade').value,
+        floor: document.getElementById('rf-floor').value
+      };
+      if (!data.roomName) { toast('Room label required'); return; }
+      if (APP.rooms.some(function (r) { return r.roomName === data.roomName; })) { toast('Duplicate room name'); return; }
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'addRoom'); return; } document.getElementById('room-form').reset(); refreshAll(); toast('Room added'); })
+        .withFailureHandler(function (e) { handleError(e, 'addRoom'); }).addRoom(data);
+    });
+  }
+
+  function renderRoomList() {
+    var container = document.getElementById('room-list'); container.innerHTML = '';
+    var list = filterRooms(APP.rooms);
+    document.getElementById('room-count').textContent = list.length + ' room' + (list.length !== 1 ? 's' : '');
+    if (!list.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
+
+    // Group by floor, then hallway
+    var byFloor = {};
+    list.forEach(function (r) { var fl = r.floor || '1'; if (!byFloor[fl]) byFloor[fl] = []; byFloor[fl].push(r); });
+
+    ['1', '2'].forEach(function (fl) {
+      if (!byFloor[fl]) return;
+      var floorDiv = document.createElement('div');
+      floorDiv.innerHTML = '<h3 class="floor-header">Floor ' + fl + '</h3>';
+
+      var hallways = {};
+      byFloor[fl].forEach(function (r) { var hw = r.hallway || 'Other'; if (!hallways[hw]) hallways[hw] = []; hallways[hw].push(r); });
+
+      Object.keys(hallways).sort().forEach(function (hw) {
+        var section = document.createElement('div'); section.className = 'hallway-section';
+        section.innerHTML = '<h4 class="hallway-header">' + esc(hw) + '</h4>';
+        var grid = document.createElement('div'); grid.className = 'room-cards';
+        hallways[hw].forEach(function (r) {
+          var teacher = APP.teachers.find(function (t) { return t.teacherId === r.teacherId; });
+          var div = document.createElement('div'); div.className = 'room-card';
+          var cap = r.maxCapacity || (r.rows * r.columns);
+          div.innerHTML = '<h3>' + esc(r.roomName) + (r.roomNumber ? ' <span class="room-num">Rm ' + esc(r.roomNumber) + '</span>' : '') + '</h3>' +
+            '<p>' + r.rows + ' &times; ' + r.columns + ' &mdash; cap ' + cap + '</p>' +
+            (teacher ? '<p class="room-teacher">' + esc(teacher.name) + '</p>' : '') +
+            (r.grade ? '<span class="badge badge--grade">Gr ' + esc(r.grade) + '</span> ' : '') +
+            '<span class="badge badge--floor">F' + esc(r.floor || '1') + '</span> ' +
+            '<button class="btn btn--sm btn--danger" onclick="confirmDeleteRoom(\'' + esc(r.roomName) + '\')">Delete</button>';
+          grid.appendChild(div);
+        });
+        section.appendChild(grid); floorDiv.appendChild(section);
+      });
+      container.appendChild(floorDiv);
+    });
+  }
+
+  function confirmDeleteRoom(name) {
+    if (!confirm('Delete room "' + name + '" and its assignments?')) return;
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) { if (res && res.success === false) { handleError(res.message, 'deleteRoom'); return; } refreshAll(); toast('Room deleted'); })
+      .withFailureHandler(function (e) { handleError(e, 'deleteRoom'); }).deleteRoom(name);
+  }
+
+  // =========================================================================
+  // Staging Ground
+  // =========================================================================
+  function initStagingView() {
+    var createBtn = document.getElementById('btn-create-group');
+    createBtn.addEventListener('click', function () {
+      var name = document.getElementById('new-group-name').value.trim();
+      if (!name) { toast('Enter a group name'); return; }
+      disableBtn(createBtn, 'Creating...');
+      google.script.run.withSuccessHandler(function () {
+        document.getElementById('new-group-name').value = '';
+        enableBtn(createBtn);
+        refreshAll(true);
+        toast('Group created');
+      }).withFailureHandler(function (e) {
+        toast('Error: ' + e.message);
+        enableBtn(createBtn);
+      }).createStagingGroup(name);
+    });
+    document.getElementById('staging-acc-filter').addEventListener('change', renderStagingView);
+
+    // Event delegation for staging group buttons (set up ONCE here, not in renderStagingGroups)
+    var container = document.getElementById('staging-groups-container');
+    container.addEventListener('click', function (e) {
+      var removeBtn = e.target.closest('.btn-remove-staged');
+      var deleteBtn = e.target.closest('.btn-delete-group');
+      var placeBtn = e.target.closest('.btn-place-group');
+      var editBtn = e.target.closest('.btn-edit-accom');
+
+      if (removeBtn) {
+        var gid = removeBtn.dataset.groupId;
+        var sid = removeBtn.dataset.studentId;
+        // Optimistic local update
+        var group = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
+        if (group) {
+          group.studentIds = group.studentIds.filter(function (id) { return id !== sid; });
+          renderStagingView();
+          toast('Removed from group');
+        }
+        google.script.run.withSuccessHandler(function () { })
+          .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
+          .removeStudentFromStagingGroup(gid, sid);
+        return;
+      }
+
+      if (deleteBtn) {
+        var gid = deleteBtn.dataset.groupId;
+        if (!confirm('Delete this staging group?')) return;
+        // Optimistic local update
+        APP.stagingGroups = APP.stagingGroups.filter(function (g) { return g.groupId !== gid; });
+        renderStagingView();
+        toast('Group deleted');
+        google.script.run.withSuccessHandler(function () { })
+          .withFailureHandler(function (err) { toast('Error: ' + err.message); refreshAll(true); })
+          .deleteStagingGroup(gid);
+        return;
+      }
+
+      if (placeBtn) {
+        var gid = placeBtn.dataset.groupId;
+        var roomSel = container.querySelector('.staging-room-select[data-group-id="' + gid + '"]');
+        var roomName = roomSel ? roomSel.value : '';
+        if (!roomName) { toast('Select a room first'); return; }
+        disableBtn(placeBtn, 'Placing...');
+        showLoading(true);
+        google.script.run.withSuccessHandler(function (res) {
+          refreshAll();
+          toast(res.message || 'Group placed');
+        }).withFailureHandler(function (err) {
+          toast('Error: ' + err.message);
+          showLoading(false);
+          enableBtn(placeBtn);
+        }).placeStagingGroupInRoom(gid, roomName);
+        return;
+      }
+
+      if (editBtn) {
+        openAccomModal(editBtn.dataset.studentId);
+      }
+    });
+  }
+
+  function renderStagingView() { renderStagingStudentList(); renderStagingGroups(); }
+
+  function renderStagingStudentList() {
+    var accF = document.getElementById('staging-acc-filter').value;
+    var stagedIds = {};
+    APP.stagingGroups.forEach(function (g) { g.studentIds.forEach(function (sid) { stagedIds[sid] = true; }); });
+    var list = filterStudentsByGrade(APP.students).filter(function (s) {
+      if (stagedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
+    });
+    var ul = document.getElementById('staging-student-list'); ul.innerHTML = '';
+    if (!list.length) { ul.innerHTML = '<li class="muted">No available students.</li>'; return; }
+    list.forEach(function (s) {
+      var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
+      li.dataset.studentId = s.studentId;
+      li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>';
+      li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', 'stage:' + s.studentId); li.classList.add('dragging'); });
+      li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
+      ul.appendChild(li);
+    });
+  }
+
+  function renderStagingGroups() {
+    var container = document.getElementById('staging-groups-container'); container.innerHTML = '';
+    if (!APP.stagingGroups.length) { container.innerHTML = '<p class="muted">No staging groups yet. Create one above.</p>'; return; }
+    APP.stagingGroups.forEach(function (group) {
+      var div = document.createElement('div'); div.className = 'staging-group';
+      var memberCount = group.studentIds.filter(function (id) { return id; }).length;
+      var header = document.createElement('div'); header.className = 'staging-group__header';
+      header.innerHTML = '<h3>' + esc(group.groupName) + ' <span class="count-badge">' + memberCount + '</span></h3>' +
+        '<div class="staging-group__actions"><select class="staging-room-select" data-group-id="' + esc(group.groupId) + '"><option value="">Place in room...</option></select>' +
+        '<button class="btn btn--sm btn--accent btn-place-group" data-group-id="' + esc(group.groupId) + '">Place</button> ' +
+        '<button class="btn btn--sm btn--danger btn-delete-group" data-group-id="' + esc(group.groupId) + '">Delete</button></div>';
+      div.appendChild(header);
+      var roomSel = header.querySelector('.staging-room-select');
+      filterRooms(APP.rooms).forEach(function (r) {
+        var opt = document.createElement('option'); opt.value = r.roomName;
+        opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : ''); roomSel.appendChild(opt);
+      });
+      var dropZone = document.createElement('div'); dropZone.className = 'staging-group__members'; dropZone.dataset.groupId = group.groupId;
+      dropZone.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
+      dropZone.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
+      dropZone.addEventListener('drop', function (e) {
+        e.preventDefault(); this.classList.remove('drag-over');
+        var payload = e.dataTransfer.getData('text/plain'); if (!payload.startsWith('stage:')) return;
+        var sid = payload.replace('stage:', ''); var gid = this.dataset.groupId;
+        // Optimistic local update — no loading overlay
+        var grp = APP.stagingGroups.find(function (g) { return g.groupId === gid; });
+        if (grp && grp.studentIds.indexOf(sid) === -1) {
+          grp.studentIds.push(sid);
+          renderStagingView();
+          toast('Student added to group');
+        }
+        // Silent server sync
+        google.script.run.withSuccessHandler(function () { })
+          .withFailureHandler(function (err) { toast('Error saving: ' + err.message); refreshAll(true); })
+          .addStudentToStagingGroup(gid, sid);
+      });
+      if (!memberCount) { dropZone.innerHTML = '<p class="muted">Drag students here</p>'; }
+      else {
+        group.studentIds.forEach(function (sid) {
+          if (!sid) return;
+          var s = APP.students.find(function (x) { return x.studentId === sid; }); if (!s) return;
+          var chip = document.createElement('div'); chip.className = 'student-chip student-chip--staged';
+          chip.innerHTML = '<strong>' + esc(s.name) + '</strong> ' + accomBadges(s) +
+            ' <button class="btn btn--sm btn--danger btn-remove-staged" data-group-id="' + esc(group.groupId) + '" data-student-id="' + esc(sid) + '">&times;</button>' +
+            ' <button class="btn btn--sm btn--secondary btn-edit-accom" data-student-id="' + esc(sid) + '">IEP</button>';
+          dropZone.appendChild(chip);
+        });
+      }
+      div.appendChild(dropZone); container.appendChild(div);
+    });
+    // NOTE: Click delegation is in initStagingView(), not here — avoids duplicate listeners
+  }
+
+  // =========================================================================
+  // Assignment View
+  // =========================================================================
+  function initAssignView() {
+    document.getElementById('grid-room-select').addEventListener('change', function () { APP.selectedRoom = this.value; renderGrid(); });
+    document.getElementById('assign-acc-filter').addEventListener('change', renderUnassignedList);
+    document.getElementById('btn-auto-suggest').addEventListener('click', function () { runAutoSuggest(this); });
+    document.getElementById('btn-finalize').addEventListener('click', function () { runFinalize(this); });
+    document.getElementById('filler-mode').addEventListener('change', function () { APP.fillerMode = this.checked; renderGrid(); });
+    document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf', this); });
+    document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word', this); });
+  }
+
+  function renderAssignView() {
+    var sel = document.getElementById('grid-room-select'); var prev = sel.value; sel.innerHTML = '';
+    var filteredRooms = filterRooms(APP.rooms);
+    filteredRooms.forEach(function (r) {
+      var opt = document.createElement('option'); opt.value = r.roomName;
+      opt.textContent = r.roomName + (r.roomNumber ? ' (Rm ' + r.roomNumber + ')' : '') + ' F' + (r.floor || '1');
+      sel.appendChild(opt);
+    });
+    if (prev && filteredRooms.some(function (r) { return r.roomName === prev; })) sel.value = prev;
+    APP.selectedRoom = sel.value;
+    renderUnassignedList(); renderGrid();
+  }
+
+  function renderUnassignedList() {
+    var accF = document.getElementById('assign-acc-filter').value;
+    var assignedIds = {}; APP.assignments.forEach(function (a) { assignedIds[a.studentId] = true; });
+    var list = filterStudentsByGrade(APP.students).filter(function (s) {
+      if (assignedIds[s.studentId]) return false; if (accF && !s[accF]) return false; return true;
+    });
+    var ul = document.getElementById('unassigned-list'); ul.innerHTML = '';
+    if (!list.length) { ul.innerHTML = '<li class="muted">No unassigned students match filters.</li>'; return; }
+    list.forEach(function (s) {
+      var li = document.createElement('li'); li.className = 'student-chip'; li.setAttribute('draggable', 'true');
+      li.dataset.studentId = s.studentId;
+      li.innerHTML = '<strong>' + esc(s.name) + '</strong> <span class="chip-meta">Gr' + esc(s.grade) + ' ' + accomBadges(s) + '</span>' +
+        ' <button class="btn btn--sm btn--secondary btn-inline-accom" data-student-id="' + esc(s.studentId) + '">IEP</button>';
+      li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', s.studentId); li.classList.add('dragging'); });
+      li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
+      ul.appendChild(li);
+    });
+    ul.addEventListener('click', function (e) {
+      if (e.target.classList.contains('btn-inline-accom')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
+    });
+  }
+
+  // ---------- Room Grid ----------
+
+  function renderGrid() {
+    var container = document.getElementById('grid-container');
+    var warnings = document.getElementById('grid-warnings');
+    var infoBar = document.getElementById('grid-room-info');
+    container.innerHTML = ''; warnings.innerHTML = ''; infoBar.innerHTML = '';
+
+    var room = APP.rooms.find(function (r) { return r.roomName === APP.selectedRoom; });
+    if (!room) { container.innerHTML = '<p class="muted">Select a room.</p>'; return; }
+
+    var teacher = APP.teachers.find(function (t) { return t.teacherId === room.teacherId; });
+    var infoParts = [];
+    if (room.roomNumber) infoParts.push('Room ' + room.roomNumber);
+    if (room.hallway) infoParts.push(room.hallway);
+    if (room.floor) infoParts.push('Floor ' + room.floor);
+    if (teacher) infoParts.push('Teacher: ' + teacher.name);
+    if (room.grade) infoParts.push('Grade ' + room.grade);
+    var cap = room.maxCapacity || (room.rows * room.columns);
+    var fillerCount = APP.fillerCells.filter(function (f) { return f.roomName === room.roomName; }).length;
+    infoParts.push('Capacity: ' + (cap - fillerCount) + ' (' + fillerCount + ' blocked)');
+    infoBar.innerHTML = infoParts.map(function (p) { return '<span class="info-chip">' + esc(p) + '</span>'; }).join(' ');
+
+    var seatMap = {};
+    var roomAssignments = APP.assignments.filter(function (a) { return a.roomName === room.roomName; });
+    roomAssignments.forEach(function (a) { seatMap[a.row + ',' + a.column] = a; });
+
+    container.style.gridTemplateColumns = 'repeat(' + room.columns + ', 1fr)';
+
+    for (var r = 1; r <= room.rows; r++) {
+      for (var c = 1; c <= room.columns; c++) {
+        var cell = document.createElement('div');
+        cell.className = 'grid-cell';
+        cell.dataset.row = r; cell.dataset.col = c;
+        var key = r + ',' + c;
+        var isFiller = isFillerCell(room.roomName, r, c);
+        var a = seatMap[key];
+
+        if (isFiller && !a) {
+          // Filler / blocked cell
+          cell.classList.add('filler');
+          cell.innerHTML = '<span class="cell-filler-icon">X</span>';
+          // Click to toggle filler off
+          (function (row, col) {
+            cell.addEventListener('click', function () {
+              if (!APP.fillerMode) return;
+              showLoading(true);
+              google.script.run.withSuccessHandler(function (res) {
+                APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
+                if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
+                renderGrid(); showLoading(false);
+              }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+                .toggleFillerCell(APP.selectedRoom, row, col);
+            });
+          })(r, c);
+        } else if (a) {
+          var student = APP.students.find(function (s) { return s.studentId === a.studentId; });
+          if (student) {
+            cell.classList.add('occupied');
+            if (student.readAloud) cell.classList.add('read-aloud');
+            cell.innerHTML = '<span class="cell-name">' + esc(student.name) + '</span>' +
+              '<span class="cell-codes">' + accomBadges(student) + '</span>' +
+              '<button class="btn btn--sm btn--secondary cell-iep-btn" data-student-id="' + esc(student.studentId) + '">IEP</button>';
+            if (student.proximity && r > 2) cell.classList.add('warn-proximity');
+            cell.setAttribute('draggable', 'true');
+            (function (sid) {
+              cell.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', sid); cell.classList.add('dragging'); });
+              cell.addEventListener('dragend', function () { cell.classList.remove('dragging'); });
+            })(student.studentId);
+            (function (sid) {
+              cell.addEventListener('dblclick', function () {
+                if (!confirm('Unassign this student?')) return; showLoading(true);
+                google.script.run.withSuccessHandler(function () {
+                  APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== sid; });
+                  renderAssignView(); showLoading(false); toast('Student unassigned');
+                }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); }).removeAssignment(sid);
+              });
+            })(student.studentId);
+          }
+        } else {
+          // Empty cell
+          cell.innerHTML = '<span class="cell-label">R' + r + 'C' + c + '</span>';
+          // In filler mode, click to toggle filler
+          (function (row, col) {
+            cell.addEventListener('click', function () {
+              if (!APP.fillerMode) return;
+              showLoading(true);
+              google.script.run.withSuccessHandler(function (res) {
+                APP.fillerCells = APP.fillerCells.filter(function (f) { return !(f.roomName === APP.selectedRoom && f.row === row && f.column === col); });
+                if (res.isFiller) APP.fillerCells.push({ roomName: APP.selectedRoom, row: row, column: col });
+                renderGrid(); showLoading(false);
+              }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); })
+                .toggleFillerCell(APP.selectedRoom, row, col);
+            });
+          })(r, c);
+        }
+
+        // Drop handlers (only on non-filler cells)
+        if (!isFiller) {
+          cell.addEventListener('dragover', function (e) { e.preventDefault(); this.classList.add('drag-over'); });
+          cell.addEventListener('dragleave', function () { this.classList.remove('drag-over'); });
+          (function (row, col) {
+            cell.addEventListener('drop', function (e) {
+              e.preventDefault(); this.classList.remove('drag-over');
+              var studentId = e.dataTransfer.getData('text/plain');
+              if (!studentId || studentId.startsWith('stage:')) return;
+              var existing = seatMap[row + ',' + col];
+              if (existing && existing.studentId !== studentId) { toast('Seat occupied — double-click to unassign first.'); return; }
+              showLoading(true);
+              google.script.run.withSuccessHandler(function () {
+                APP.assignments = APP.assignments.filter(function (x) { return x.studentId !== studentId; });
+                APP.assignments.push({ studentId: studentId, roomName: APP.selectedRoom, row: row, column: col });
+                renderAssignView(); showLoading(false); toast('Student placed');
+              }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); })
+                .saveAssignment(studentId, APP.selectedRoom, row, col);
+            });
+          })(r, c);
+        }
+
+        container.appendChild(cell);
+      }
+    }
+
+    container.addEventListener('click', function (e) {
+      if (e.target.classList.contains('cell-iep-btn')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
+    });
+
+    // Warnings
+    var warnMsgs = [];
+    var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
+    if (roomAssignments.length > sgLimit) {
+      var hasSG = roomAssignments.some(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.smallGroup; });
+      if (hasSG) warnMsgs.push('Warning: Room has ' + roomAssignments.length + ' students with Small Group students (limit ' + sgLimit + ').');
+    }
+    var oto = roomAssignments.filter(function (a) { var s = APP.students.find(function (x) { return x.studentId === a.studentId; }); return s && s.oneToOne; });
+    if (oto.length && roomAssignments.length > 1) warnMsgs.push('Warning: 1:1 Testing student present but room has multiple students.');
+    warnings.innerHTML = warnMsgs.map(function (m) { return '<p class="warn">' + m + '</p>'; }).join('');
+  }
+
+  function runAutoSuggest(triggerBtn) {
+    if (!APP.rooms.length) { toast('Create rooms first'); return; }
+    if (!APP.students.length) { toast('Add students first'); return; }
+    var sgLimit = parseInt(document.getElementById('sg-limit').value, 10) || 10;
+    var gradeF = APP.gradeFilter || null;
+    disableBtn(triggerBtn, 'Suggesting...');
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (result) {
+      if (result.error) { toast(result.error); showLoading(false); enableBtn(triggerBtn); return; }
+      google.script.run.withSuccessHandler(function () {
+        APP.assignments = result; renderAssignView(); showLoading(false); enableBtn(triggerBtn);
+        toast('Auto-suggest: ' + result.length + ' placements' + (gradeF ? ' (Gr ' + gradeF + ')' : ''));
+      }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).applyRecommendations(result);
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateRecommendations(sgLimit, gradeF);
+  }
+
+  function runFinalize(triggerBtn) {
+    if (!APP.assignments.length) { toast('No assignments to finalize'); return; }
+    if (!confirm('Generate finalized layout sheets in the spreadsheet?')) return;
+    disableBtn(triggerBtn, 'Finalizing...');
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (res) { showLoading(false); enableBtn(triggerBtn); toast(res.message || 'Layout finalized'); })
+      .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).finalizeLayout();
+  }
+
+  // ---------- Export PDF / Word ----------
+
+  function runExport(format, triggerBtn) {
+    if (!APP.assignments.length) { toast('No assignments to export'); return; }
+    disableBtn(triggerBtn, 'Exporting...');
+    showLoading(true);
+    google.script.run.withSuccessHandler(function (htmlContent) {
+      showLoading(false); enableBtn(triggerBtn);
+      if (format === 'word') {
+        // Word (.doc) can be generated from HTML with mso namespace
+        var wordHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+          '<head><meta charset="utf-8"><title>Testing Assignments</title></head><body>' +
+          htmlContent.replace(/<!DOCTYPE html>.*?<body>/s, '').replace(/<\/body><\/html>/, '') +
+          '</body></html>';
+        var blob = new Blob([wordHtml], { type: 'application/msword' });
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'Testing_Assignments.doc';
+        link.click();
+        URL.revokeObjectURL(link.href);
+        toast('Word document downloaded');
+      } else {
+        // PDF via print dialog
+        var win = window.open('', '_blank');
+        if (win) {
+          win.document.write(htmlContent);
+          win.document.close();
+          win.focus();
+          setTimeout(function () { win.print(); }, 500);
+          toast('Print dialog opened — save as PDF');
+        } else {
+          toast('Pop-up blocked — allow pop-ups for this site');
+        }
+      }
+    }).withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(triggerBtn); }).generateExportHTML();
+  }
+
+  // =========================================================================
+  // Templates
+  // =========================================================================
+  function initTemplateView() {
+    var saveBtn = document.getElementById('btn-save-template');
+    saveBtn.addEventListener('click', function () {
+      var name = document.getElementById('tpl-name').value.trim();
+      if (!name) { toast('Enter a template name'); return; }
+      disableBtn(saveBtn, 'Saving...');
+      showLoading(true);
+      google.script.run.withSuccessHandler(function (res) { document.getElementById('tpl-name').value = ''; enableBtn(saveBtn); refreshAll(); toast(res.message); })
+        .withFailureHandler(function (e) { toast('Error: ' + e.message); showLoading(false); enableBtn(saveBtn); }).saveTemplate(name);
+    });
+  }
+
+  function renderTemplateList() {
+    var container = document.getElementById('template-list'); container.innerHTML = '';
+    if (!APP.templates.length) { container.innerHTML = '<p class="muted">No saved templates.</p>'; return; }
+    APP.templates.forEach(function (tpl) {
+      var div = document.createElement('div'); div.className = 'template-card';
+      var d = tpl.data || {};
+      div.innerHTML = '<h3>' + esc(tpl.templateName) + '</h3>' +
+        '<p class="muted">' + (d.teachers || []).length + ' teacher(s), ' + (d.rooms || []).length + ' room(s)</p>' +
+        '<button class="btn btn--sm btn--primary btn-load-tpl" data-name="' + esc(tpl.templateName) + '">Load</button> ' +
+        '<button class="btn btn--sm btn--danger btn-delete-tpl" data-name="' + esc(tpl.templateName) + '">Delete</button>';
+      container.appendChild(div);
+    });
+    container.addEventListener('click', function (e) {
+      if (e.target.classList.contains('btn-load-tpl')) {
+        var name = e.target.dataset.name;
+        if (!confirm('Load "' + name + '"? Replaces current teachers and rooms.')) return;
+        showLoading(true);
+        google.script.run.withSuccessHandler(function (res) {
+          if (res && res.success === false) { handleError(res.message, 'loadTemplate'); showLoading(false); return; }
+          refreshAll(); toast(res.message); showLoading(false);
+        }).withFailureHandler(function (err) { handleError(err, 'loadTemplate'); showLoading(false); }).loadTemplate(name);
+      }
+      if (e.target.classList.contains('btn-delete-tpl')) {
+        if (!confirm('Delete "' + e.target.dataset.name + '"?')) return;
+        showLoading(true);
+        google.script.run.withSuccessHandler(function (res) {
+          if (res && res.success === false) { handleError(res.message, 'deleteTemplate'); showLoading(false); return; }
+          refreshAll(); toast('Template deleted'); showLoading(false);
+        }).withFailureHandler(function (err) { handleError(err, 'deleteTemplate'); showLoading(false); }).deleteTemplate(e.target.dataset.name);
+      }
+    });
+  }
+
+  // =========================================================================
+  // Utility
+  // =========================================================================
+  function esc(str) { var d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
+
+  function accomBadges(s) {
+    var b = [];
+    if (s.smallGroup) b.push('<span class="badge badge--sg">SG</span>');
+    if (s.readAloud) b.push('<span class="badge badge--ra">RA</span>');
+    if (s.oneToOne) b.push('<span class="badge badge--11">1:1</span>');
+    if (s.proximity) b.push('<span class="badge badge--prox">PROX</span>');
+    if (s.prompting) b.push('<span class="badge badge--pmpt">PMPT</span>');
+    if (s.otherAccommodations) b.push('<span class="badge badge--other">' + esc(s.otherAccommodations) + '</span>');
+    return b.join(' ');
+  }
+
+  function toast(msg) {
+    var el = document.getElementById('toast'); el.textContent = msg; el.classList.remove('hidden');
+    clearTimeout(el._timer); el._timer = setTimeout(function () { el.classList.add('hidden'); }, 4000);
+  }
+
+  function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
+
+  function handleError(e, context) {
+    console.error('ERROR [' + (context || 'Unknown') + ']:', e);
+    var msg = (e && e.message) ? e.message : String(e);
+    toast('Error: ' + msg);
+    showLoading(false);
+  }
+
+  function disableBtn(btn, busyText) {
+    if (!btn) return;
+    btn.disabled = true;
+    btn._origText = btn.textContent;
+    if (busyText) btn.textContent = busyText;
+  }
+  function enableBtn(btn) {
+    if (!btn) return;
+    btn.disabled = false;
+    if (btn._origText) { btn.textContent = btn._origText; delete btn._origText; }
+  }
+
+  // =========================================================================
+  // School Layout Designer (Drawing Tool)
+  // =========================================================================
+
+  function initDesigner() {
+    // Build palette
+    var palette = document.getElementById('designer-palette');
+    Object.keys(ROOM_TYPES).forEach(function (key) {
+      var t = ROOM_TYPES[key];
+      var btn = document.createElement('button');
+      btn.className = 'palette-btn' + (key === APP.designerTool ? ' active' : '');
+      btn.dataset.type = key;
+      btn.innerHTML = '<span class="palette-swatch" style="background:' + t.color + '"></span><span class="palette-icon">' + t.icon + '</span>' + t.label;
+      btn.addEventListener('click', function () {
+        palette.querySelectorAll('.palette-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        APP.designerTool = key;
+      });
+      palette.appendChild(btn);
+    });
+
+    // Floor view selector (Both / Floor 1 / Floor 2)
+    document.querySelectorAll('.designer-floor-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.designer-floor-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        APP.designerFloorView = btn.dataset.dfloor;
+        if (btn.dataset.dfloor) APP.designerFloor = btn.dataset.dfloor;
+        renderDesignerCanvas();
+        toast(btn.dataset.dfloor ? 'Viewing Floor ' + btn.dataset.dfloor + ' — new rooms on Floor ' + btn.dataset.dfloor : 'Viewing both floors');
+      });
+    });
+
+    // Canvas setup
+    var canvas = document.getElementById('designer-canvas');
+    canvas.style.width = (CANVAS_COLS * zg()) + 'px';
+    canvas.style.height = (CANVAS_ROWS * zg()) + 'px';
+
+    var preview = document.createElement('div');
     preview.id = 'draw-preview';
     preview.className = 'designer-preview hidden';
     canvas.appendChild(preview);
-  }
 
-  APP.designerRooms.forEach(function (room) {
-    var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
-    var floorClass = room.floor === '2' ? ' floor-2' : ' floor-1';
-    var dimmed = APP.designerFloorView && room.floor !== APP.designerFloorView ? ' floor-dimmed' : '';
-    var el = document.createElement('div');
-    el.className = 'designer-room' + floorClass + dimmed + (room.id === APP.designerSelectedId ? ' selected' : '');
-    el.dataset.roomId = room.id;
-    el.style.left = (room.gridX * gridPx) + 'px';
-    el.style.top = (room.gridY * gridPx) + 'px';
-    el.style.width = (room.gridW * gridPx) + 'px';
-    el.style.height = (room.gridH * gridPx) + 'px';
-    el.style.backgroundColor = typeInfo.bg;
-    el.style.borderColor = typeInfo.color;
+    canvas.addEventListener('mousedown', onCanvasMouseDown);
+    document.addEventListener('mousemove', onCanvasMouseMove);
+    document.addEventListener('mouseup', onCanvasMouseUp);
 
-    var isSmall = room.gridW <= 3 || room.gridH <= 2;
-    el.innerHTML =
-      '<span class="designer-room-icon">' + typeInfo.icon + '</span>' +
-      '<span class="designer-room-label">' + esc(room.name) + '</span>' +
-      (isSmall ? '' : '<span class="designer-room-size">Cap: ' + room.capacity + '</span>') +
-      '<span class="designer-floor-badge floor-badge-' + room.floor + '">F' + room.floor + '</span>';
+    // Ctrl+scroll to zoom
+    var scrollEl = document.querySelector('.designer-canvas-scroll');
+    scrollEl.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      var delta = e.deltaY < 0 ? 0.1 : -0.1;
+      applyDesignerZoom(Math.round((APP.designerZoom + delta) * 100) / 100);
+    }, { passive: false });
 
-    if (room.id === APP.designerSelectedId) {
-      var handle = document.createElement('div');
-      handle.className = 'resize-handle';
-      el.appendChild(handle);
-    }
-    canvas.appendChild(el);
-  });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Delete' && APP.designerSelectedId) {
+        deleteDesignerRoom(APP.designerSelectedId);
+      }
+    });
 
-  // Update info
-  var info = document.getElementById('designer-info');
-  if (info) {
-    var f1 = APP.designerRooms.filter(function (r) { return r.floor === '1'; }).length;
-    var f2 = APP.designerRooms.filter(function (r) { return r.floor === '2'; }).length;
-    info.textContent = APP.designerRooms.length + ' room' + (APP.designerRooms.length !== 1 ? 's' : '') + ' — F1: ' + f1 + ', F2: ' + f2 + '. No student names required.';
-  }
-}
+    // Action buttons
+    var importBtn = document.getElementById('btn-import-rooms');
+    importBtn.addEventListener('click', function () {
+      importDesignerToRooms(importBtn);
+    });
+    var clearBtn = document.getElementById('btn-clear-designer');
+    clearBtn.addEventListener('click', function () {
+      if (!APP.designerRooms.length || confirm('Clear all rooms from the canvas?')) {
+        APP.designerRooms = [];
+        APP.designerSelectedId = null;
+        renderDesignerCanvas();
+        renderDesignerProps();
+        toast('Canvas cleared');
+      }
+    });
 
-function renderDesignerProps() {
-  var container = document.getElementById('designer-props-content');
-  if (!APP.designerSelectedId) {
-    container.innerHTML = '<p class="muted">Draw a room on the canvas or click one to edit its properties.</p>';
-    return;
-  }
-  var room = APP.designerRooms.find(function (r) { return r.id === APP.designerSelectedId; });
-  if (!room) { container.innerHTML = '<p class="muted">No room selected.</p>'; return; }
+    // Zoom controls
+    document.getElementById('btn-zoom-in').addEventListener('click', function () {
+      applyDesignerZoom(Math.round((APP.designerZoom + 0.25) * 100) / 100);
+    });
+    document.getElementById('btn-zoom-out').addEventListener('click', function () {
+      applyDesignerZoom(Math.round((APP.designerZoom - 0.25) * 100) / 100);
+    });
+    document.getElementById('btn-zoom-reset').addEventListener('click', function () {
+      applyDesignerZoom(1.0);
+    });
 
-  var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
-  var typeOptions = Object.keys(ROOM_TYPES).map(function (k) {
-    return '<option value="' + k + '"' + (k === room.type ? ' selected' : '') + '>' + ROOM_TYPES[k].label + '</option>';
-  }).join('');
+    // Export layout to JSON file
+    document.getElementById('btn-export-layout').addEventListener('click', function () {
+      if (!APP.designerRooms.length) { toast('No rooms on canvas to export'); return; }
+      var payload = JSON.stringify(APP.designerRooms, null, 2);
+      var blob = new Blob([payload], { type: 'application/json' });
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'school-layout.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast('Layout exported to school-layout.json');
+    });
 
-  container.innerHTML =
-    '<div class="props-form">' +
-    '<label>Room Name<input type="text" id="dp-name" value="' + esc(room.name) + '"></label>' +
-    '<label>Type<select id="dp-type">' + typeOptions + '</select></label>' +
-    '<label>Room Number<input type="text" id="dp-number" value="' + esc(room.roomNumber) + '" placeholder="e.g. 101"></label>' +
-    '<label>Hallway<input type="text" id="dp-hallway" value="' + esc(room.hallway) + '" placeholder="e.g. 6th Grade Hall"></label>' +
-    '<label>Floor<select id="dp-floor">' +
-      '<option value="1"' + (room.floor === '1' ? ' selected' : '') + '>1st Floor</option>' +
-      '<option value="2"' + (room.floor === '2' ? ' selected' : '') + '>2nd Floor</option>' +
-    '</select></label>' +
-    '<label>Seating Capacity<input type="number" id="dp-cap" min="0" value="' + room.capacity + '"></label>' +
-    '<div style="font-size:.75rem;color:var(--clr-muted)">Position: (' + room.gridX + ', ' + room.gridY + ') — Size: ' + room.gridW + '&times;' + room.gridH + ' cells</div>' +
-    '<div class="props-actions">' +
-    '<button class="btn btn--primary btn--sm" id="dp-save">Apply</button>' +
-    '<button class="btn btn--danger btn--sm" id="dp-delete">Delete Room</button>' +
-    '</div></div>';
-
-  document.getElementById('dp-save').addEventListener('click', function () {
-    room.name = document.getElementById('dp-name').value.trim() || room.name;
-    room.type = document.getElementById('dp-type').value;
-    room.roomNumber = document.getElementById('dp-number').value.trim();
-    room.hallway = document.getElementById('dp-hallway').value.trim();
-    room.floor = document.getElementById('dp-floor').value;
-    room.capacity = parseInt(document.getElementById('dp-cap').value, 10) || room.capacity;
-    renderDesignerCanvas();
-    renderDesignerProps();
-    toast('Room properties updated');
-  });
-
-  document.getElementById('dp-delete').addEventListener('click', function () {
-    deleteDesignerRoom(room.id);
-  });
-}
-
-function capacityToGrid(cap) {
-  if (cap <= 0) return { rows: 1, columns: 1 };
-  var cols = Math.ceil(Math.sqrt(cap));
-  var rows = Math.ceil(cap / cols);
-  return { rows: rows, columns: cols };
-}
-
-function importDesignerToRooms(triggerBtn) {
-  var importable = APP.designerRooms.filter(function (r) {
-    return r.type !== 'hallway' && r.type !== 'restroom' && r.type !== 'storage' && r.capacity > 0;
-  });
-  if (!importable.length) { toast('No importable rooms on canvas'); return; }
-  if (!confirm('Import ' + importable.length + ' rooms to the Rooms tab? (Hallways, restrooms, and storage are skipped.)')) return;
-
-  disableBtn(triggerBtn, 'Importing...');
-  showLoading(true);
-  var pending = importable.length;
-  var added = 0;
-  importable.forEach(function (dr) {
-    // Check if room already exists
-    if (APP.rooms.some(function (r) { return r.roomName === dr.name; })) { pending--; if (pending <= 0) finishImport(added); return; }
-    var grid = capacityToGrid(dr.capacity);
-    var data = {
-      roomName: dr.name, roomNumber: dr.roomNumber, hallway: dr.hallway,
-      rows: String(grid.rows), columns: String(grid.columns),
-      maxCapacity: String(dr.capacity), teacherId: '', grade: '', floor: dr.floor
-    };
-    google.script.run.withSuccessHandler(function () {
-      added++; pending--; if (pending <= 0) finishImport(added);
-    }).withFailureHandler(function () {
-      pending--; if (pending <= 0) finishImport(added);
-    }).addRoom(data);
-  });
-
-  function finishImport(count) { enableBtn(triggerBtn); refreshAll(); toast(count + ' room(s) imported to Rooms tab'); }
-}
-
-// =========================================================================
-// Designer Layout Save/Load
-// =========================================================================
-
-function refreshDesignerLayouts() {
-  google.script.run.withSuccessHandler(function (d) {
-    APP.designerLayouts = d || [];
-    renderDesignerLayoutList();
-  }).withFailureHandler(function () {}).getDesignerLayouts();
-}
-
-function renderDesignerLayoutList() {
-  var container = document.getElementById('designer-layout-list');
-  if (!container) return;
-  container.innerHTML = '';
-  if (!APP.designerLayouts.length) { container.innerHTML = '<p class="muted">No saved layouts.</p>'; return; }
-  APP.designerLayouts.forEach(function (layout) {
-    var div = document.createElement('div'); div.className = 'layout-item';
-    div.innerHTML = '<span class="layout-item-name">' + esc(layout.layoutName) + '</span>' +
-      '<span class="layout-item-meta">' + layout.roomCount + ' rooms</span>' +
-      '<button class="btn btn--sm btn--primary btn-load-layout" data-name="' + esc(layout.layoutName) + '">Load</button>' +
-      '<button class="btn btn--sm btn--danger btn-delete-layout" data-name="' + esc(layout.layoutName) + '">Del</button>';
-    container.appendChild(div);
-  });
-  container.addEventListener('click', function (e) {
-    if (e.target.classList.contains('btn-load-layout')) {
-      var name = e.target.dataset.name;
-      if (APP.designerRooms.length && !confirm('Load "' + name + '"? This replaces the current canvas.')) return;
-      showLoading(true);
-      google.script.run.withSuccessHandler(function (res) {
-        showLoading(false);
-        if (res.success) {
-          APP.designerRooms = res.rooms || [];
+    // Import layout from JSON file
+    var fileInput = document.getElementById('import-layout-file');
+    document.getElementById('btn-import-layout').addEventListener('click', function () {
+      fileInput.value = '';
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', function () {
+      var file = fileInput.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          var rooms = JSON.parse(e.target.result);
+          if (!Array.isArray(rooms)) throw new Error('Expected an array of rooms');
+          // Validate basic structure
+          rooms.forEach(function (r) {
+            if (!r.id || !r.name || r.gridX === undefined) throw new Error('Invalid room data');
+          });
+          if (APP.designerRooms.length && !confirm('Replace current canvas with imported layout (' + rooms.length + ' rooms)?')) return;
+          APP.designerRooms = rooms;
           APP.designerSelectedId = null;
           renderDesignerCanvas();
           renderDesignerProps();
-          toast('Layout "' + name + '" loaded');
-        } else { toast(res.message || 'Failed to load layout'); }
-      }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).loadDesignerLayout(name);
-    }
-    if (e.target.classList.contains('btn-delete-layout')) {
-      var name = e.target.dataset.name;
-      if (!confirm('Delete layout "' + name + '"?')) return;
-      google.script.run.withSuccessHandler(function () { refreshDesignerLayouts(); toast('Layout deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteDesignerLayout(name);
-    }
-  });
-}
+          toast('Imported ' + rooms.length + ' rooms from ' + file.name);
+        } catch (err) {
+          toast('Import failed: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
 
-// =========================================================================
-// Full Data Backup
-// =========================================================================
+    // Save layout button
+    var saveLayoutBtn = document.getElementById('btn-save-layout');
+    saveLayoutBtn.addEventListener('click', function () {
+      var name = document.getElementById('designer-layout-name').value.trim();
+      if (!name) { toast('Enter a layout name'); return; }
+      if (!APP.designerRooms.length) { toast('No rooms on canvas to save'); return; }
+      disableBtn(saveLayoutBtn, 'Saving...');
+      var json = JSON.stringify(APP.designerRooms);
+      google.script.run.withSuccessHandler(function (res) {
+        document.getElementById('designer-layout-name').value = '';
+        enableBtn(saveLayoutBtn);
+        refreshDesignerLayouts();
+        toast(res.message);
+      }).withFailureHandler(function (e) {
+        toast('Error: ' + e.message);
+        enableBtn(saveLayoutBtn);
+      }).saveDesignerLayout(name, json);
+    });
+  }
 
-function initBackupView() {
-  var createBtn = document.getElementById('btn-create-backup');
-  createBtn.addEventListener('click', function () {
-    var name = document.getElementById('backup-name').value.trim();
-    if (!name) { toast('Enter a backup name'); return; }
-    disableBtn(createBtn, 'Saving...');
+  function snapGrid(px) { return Math.round(px / GRID); }
+
+  function getCanvasCoords(e) {
+    var scrollEl = document.querySelector('.designer-canvas-scroll');
+    var rect = scrollEl.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left + scrollEl.scrollLeft) / APP.designerZoom,
+      y: (e.clientY - rect.top + scrollEl.scrollTop) / APP.designerZoom
+    };
+  }
+
+  function onCanvasMouseDown(e) {
+    if (e.button !== 0) return;
+    var pos = getCanvasCoords(e);
+
+    // Check resize handle
+    if (e.target.classList.contains('resize-handle')) {
+      var roomId = e.target.parentElement.dataset.roomId;
+      var room = APP.designerRooms.find(function (r) { return r.id === roomId; });
+      if (room) {
+        APP._resizing = true;
+        APP._resizeRoom = roomId;
+        APP._resizeStart = pos;
+        APP._resizeOriginal = { gridX: room.gridX, gridY: room.gridY, gridW: room.gridW, gridH: room.gridH };
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+    }
+
+    // Check room click
+    var roomEl = e.target.closest('.designer-room');
+    if (roomEl) {
+      var id = roomEl.dataset.roomId;
+      selectDesignerRoom(id);
+      var rm = APP.designerRooms.find(function (r) { return r.id === id; });
+      if (rm) {
+        APP._dragging = true;
+        APP._dragRoom = id;
+        APP._dragStart = pos;
+        APP._dragOriginal = { gridX: rm.gridX, gridY: rm.gridY };
+      }
+      e.preventDefault();
+      return;
+    }
+
+    // Start drawing on empty canvas
+    APP.designerSelectedId = null;
+    renderDesignerProps();
+    APP._drawing = true;
+    APP._drawStart = { gx: snapGrid(pos.x), gy: snapGrid(pos.y) };
+    e.preventDefault();
+  }
+
+  function onCanvasMouseMove(e) {
+    if (APP._drawing) {
+      var pos = getCanvasCoords(e);
+      var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+      var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
+      var left = Math.min(sx, gx), top = Math.min(sy, gy);
+      var w = Math.max(2, Math.abs(gx - sx)), h = Math.max(2, Math.abs(gy - sy));
+      var preview = document.getElementById('draw-preview');
+      preview.classList.remove('hidden');
+      preview.style.left = (left * zg()) + 'px';
+      preview.style.top = (top * zg()) + 'px';
+      preview.style.width = (w * zg()) + 'px';
+      preview.style.height = (h * zg()) + 'px';
+      return;
+    }
+
+    if (APP._dragging) {
+      var pos = getCanvasCoords(e);
+      var room = APP.designerRooms.find(function (r) { return r.id === APP._dragRoom; });
+      if (!room) return;
+      var dx = snapGrid(pos.x) - snapGrid(APP._dragStart.x);
+      var dy = snapGrid(pos.y) - snapGrid(APP._dragStart.y);
+      room.gridX = Math.max(0, APP._dragOriginal.gridX + dx);
+      room.gridY = Math.max(0, APP._dragOriginal.gridY + dy);
+      renderDesignerCanvas();
+      return;
+    }
+
+    if (APP._resizing) {
+      var pos = getCanvasCoords(e);
+      var room = APP.designerRooms.find(function (r) { return r.id === APP._resizeRoom; });
+      if (!room) return;
+      var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+      room.gridW = Math.max(2, gx - room.gridX);
+      room.gridH = Math.max(2, gy - room.gridY);
+      renderDesignerCanvas();
+      return;
+    }
+  }
+
+  function onCanvasMouseUp(e) {
+    if (APP._drawing) {
+      var pos = getCanvasCoords(e);
+      var gx = snapGrid(pos.x), gy = snapGrid(pos.y);
+      var sx = APP._drawStart.gx, sy = APP._drawStart.gy;
+      var left = Math.min(sx, gx), top = Math.min(sy, gy);
+      var w = Math.abs(gx - sx), h = Math.abs(gy - sy);
+      document.getElementById('draw-preview').classList.add('hidden');
+      APP._drawing = false;
+
+      if (w >= 2 && h >= 2) {
+        var type = APP.designerTool;
+        var info = ROOM_TYPES[type];
+        var count = APP.designerRooms.filter(function (r) { return r.type === type; }).length + 1;
+        var newFloor = APP.designerFloorView || APP.designerFloor || '1';
+        var newRoom = {
+          id: 'dr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+          name: info.label + ' ' + count,
+          type: type,
+          floor: newFloor,
+          hallway: '', roomNumber: '',
+          gridX: left, gridY: top, gridW: w, gridH: h,
+          capacity: Math.max(1, w * h)
+        };
+        APP.designerRooms.push(newRoom);
+        selectDesignerRoom(newRoom.id);
+        renderDesignerCanvas();
+        toast('Room "' + newRoom.name + '" created');
+      }
+      return;
+    }
+    APP._dragging = false;
+    APP._resizing = false;
+  }
+
+  function selectDesignerRoom(id) {
+    APP.designerSelectedId = id;
+    renderDesignerCanvas();
+    renderDesignerProps();
+  }
+
+  function deleteDesignerRoom(id) {
+    APP.designerRooms = APP.designerRooms.filter(function (r) { return r.id !== id; });
+    if (APP.designerSelectedId === id) APP.designerSelectedId = null;
+    renderDesignerCanvas();
+    renderDesignerProps();
+    toast('Room deleted');
+  }
+
+  function applyDesignerZoom(newZoom) {
+    APP.designerZoom = Math.min(3.0, Math.max(0.25, newZoom));
+    var pct = Math.round(APP.designerZoom * 100);
+    var zoomLabel = document.getElementById('zoom-level');
+    if (zoomLabel) zoomLabel.textContent = pct + '%';
+    renderDesignerCanvas();
+  }
+
+  function renderDesignerCanvas() {
+    var canvas = document.getElementById('designer-canvas');
+    // Update canvas size and grid pattern to match zoom
+    var gridPx = zg();
+    canvas.style.width = (CANVAS_COLS * gridPx) + 'px';
+    canvas.style.height = (CANVAS_ROWS * gridPx) + 'px';
+    canvas.style.backgroundSize = gridPx + 'px ' + gridPx + 'px';
+    // Preserve preview element
+    var preview = document.getElementById('draw-preview');
+    canvas.innerHTML = '';
+    if (preview) canvas.appendChild(preview);
+    else {
+      preview = document.createElement('div');
+      preview.id = 'draw-preview';
+      preview.className = 'designer-preview hidden';
+      canvas.appendChild(preview);
+    }
+
+    APP.designerRooms.forEach(function (room) {
+      var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
+      var floorClass = room.floor === '2' ? ' floor-2' : ' floor-1';
+      var dimmed = APP.designerFloorView && room.floor !== APP.designerFloorView ? ' floor-dimmed' : '';
+      var el = document.createElement('div');
+      el.className = 'designer-room' + floorClass + dimmed + (room.id === APP.designerSelectedId ? ' selected' : '');
+      el.dataset.roomId = room.id;
+      el.style.left = (room.gridX * gridPx) + 'px';
+      el.style.top = (room.gridY * gridPx) + 'px';
+      el.style.width = (room.gridW * gridPx) + 'px';
+      el.style.height = (room.gridH * gridPx) + 'px';
+      el.style.backgroundColor = typeInfo.bg;
+      el.style.borderColor = typeInfo.color;
+
+      var isSmall = room.gridW <= 3 || room.gridH <= 2;
+      el.innerHTML =
+        '<span class="designer-room-icon">' + typeInfo.icon + '</span>' +
+        '<span class="designer-room-label">' + esc(room.name) + '</span>' +
+        (isSmall ? '' : '<span class="designer-room-size">Cap: ' + room.capacity + '</span>') +
+        '<span class="designer-floor-badge floor-badge-' + room.floor + '">F' + room.floor + '</span>';
+
+      if (room.id === APP.designerSelectedId) {
+        var handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        el.appendChild(handle);
+      }
+      canvas.appendChild(el);
+    });
+
+    // Update info
+    var info = document.getElementById('designer-info');
+    if (info) {
+      var f1 = APP.designerRooms.filter(function (r) { return r.floor === '1'; }).length;
+      var f2 = APP.designerRooms.filter(function (r) { return r.floor === '2'; }).length;
+      info.textContent = APP.designerRooms.length + ' room' + (APP.designerRooms.length !== 1 ? 's' : '') + ' — F1: ' + f1 + ', F2: ' + f2 + '. No student names required.';
+    }
+  }
+
+  function renderDesignerProps() {
+    var container = document.getElementById('designer-props-content');
+    if (!APP.designerSelectedId) {
+      container.innerHTML = '<p class="muted">Draw a room on the canvas or click one to edit its properties.</p>';
+      return;
+    }
+    var room = APP.designerRooms.find(function (r) { return r.id === APP.designerSelectedId; });
+    if (!room) { container.innerHTML = '<p class="muted">No room selected.</p>'; return; }
+
+    var typeInfo = ROOM_TYPES[room.type] || ROOM_TYPES.classroom;
+    var typeOptions = Object.keys(ROOM_TYPES).map(function (k) {
+      return '<option value="' + k + '"' + (k === room.type ? ' selected' : '') + '>' + ROOM_TYPES[k].label + '</option>';
+    }).join('');
+
+    container.innerHTML =
+      '<div class="props-form">' +
+      '<label>Room Name<input type="text" id="dp-name" value="' + esc(room.name) + '"></label>' +
+      '<label>Type<select id="dp-type">' + typeOptions + '</select></label>' +
+      '<label>Room Number<input type="text" id="dp-number" value="' + esc(room.roomNumber) + '" placeholder="e.g. 101"></label>' +
+      '<label>Hallway<input type="text" id="dp-hallway" value="' + esc(room.hallway) + '" placeholder="e.g. 6th Grade Hall"></label>' +
+      '<label>Floor<select id="dp-floor">' +
+      '<option value="1"' + (room.floor === '1' ? ' selected' : '') + '>1st Floor</option>' +
+      '<option value="2"' + (room.floor === '2' ? ' selected' : '') + '>2nd Floor</option>' +
+      '</select></label>' +
+      '<label>Seating Capacity<input type="number" id="dp-cap" min="0" value="' + room.capacity + '"></label>' +
+      '<div style="font-size:.75rem;color:var(--clr-muted)">Position: (' + room.gridX + ', ' + room.gridY + ') — Size: ' + room.gridW + '&times;' + room.gridH + ' cells</div>' +
+      '<div class="props-actions">' +
+      '<button class="btn btn--primary btn--sm" id="dp-save">Apply</button>' +
+      '<button class="btn btn--danger btn--sm" id="dp-delete">Delete Room</button>' +
+      '</div></div>';
+
+    document.getElementById('dp-save').addEventListener('click', function () {
+      room.name = document.getElementById('dp-name').value.trim() || room.name;
+      room.type = document.getElementById('dp-type').value;
+      room.roomNumber = document.getElementById('dp-number').value.trim();
+      room.hallway = document.getElementById('dp-hallway').value.trim();
+      room.floor = document.getElementById('dp-floor').value;
+      room.capacity = parseInt(document.getElementById('dp-cap').value, 10) || room.capacity;
+      renderDesignerCanvas();
+      renderDesignerProps();
+      toast('Room properties updated');
+    });
+
+    document.getElementById('dp-delete').addEventListener('click', function () {
+      deleteDesignerRoom(room.id);
+    });
+  }
+
+  function capacityToGrid(cap) {
+    if (cap <= 0) return { rows: 1, columns: 1 };
+    var cols = Math.ceil(Math.sqrt(cap));
+    var rows = Math.ceil(cap / cols);
+    return { rows: rows, columns: cols };
+  }
+
+  function importDesignerToRooms(triggerBtn) {
+    var importable = APP.designerRooms.filter(function (r) {
+      return r.type !== 'hallway' && r.type !== 'restroom' && r.type !== 'storage' && r.capacity > 0;
+    });
+    if (!importable.length) { toast('No importable rooms on canvas'); return; }
+    if (!confirm('Import ' + importable.length + ' rooms to the Rooms tab? (Hallways, restrooms, and storage are skipped.)')) return;
+
+    disableBtn(triggerBtn, 'Importing...');
     showLoading(true);
-    google.script.run.withSuccessHandler(function (res) {
-      document.getElementById('backup-name').value = '';
-      enableBtn(createBtn);
-      showLoading(false);
-      refreshBackups();
-      toast(res.message);
-    }).withFailureHandler(function (e) {
-      toast('Error: ' + e.message);
-      showLoading(false);
-      enableBtn(createBtn);
-    }).createFullBackup(name);
-  });
-}
+    var pending = importable.length;
+    var added = 0;
+    importable.forEach(function (dr) {
+      // Check if room already exists
+      if (APP.rooms.some(function (r) { return r.roomName === dr.name; })) { pending--; if (pending <= 0) finishImport(added); return; }
+      var grid = capacityToGrid(dr.capacity);
+      var data = {
+        roomName: dr.name, roomNumber: dr.roomNumber, hallway: dr.hallway,
+        rows: String(grid.rows), columns: String(grid.columns),
+        maxCapacity: String(dr.capacity), teacherId: '', grade: '', floor: dr.floor
+      };
+      google.script.run.withSuccessHandler(function () {
+        added++; pending--; if (pending <= 0) finishImport(added);
+      }).withFailureHandler(function () {
+        pending--; if (pending <= 0) finishImport(added);
+      }).addRoom(data);
+    });
 
-function refreshBackups() {
-  google.script.run.withSuccessHandler(function (d) {
-    APP.backups = d || [];
-    renderBackupList();
-  }).withFailureHandler(function () {}).getFullBackups();
-}
+    function finishImport(count) { enableBtn(triggerBtn); refreshAll(); toast(count + ' room(s) imported to Rooms tab'); }
+  }
 
-function renderBackupList() {
-  var container = document.getElementById('backup-list');
-  if (!container) return;
-  container.innerHTML = '';
-  if (!APP.backups.length) { container.innerHTML = '<p class="muted">No saved backups.</p>'; return; }
-  APP.backups.forEach(function (b) {
-    var div = document.createElement('div'); div.className = 'template-card';
-    var dateStr = b.createdAt ? new Date(b.createdAt).toLocaleString() : '';
-    div.innerHTML = '<h3>' + esc(b.backupName) + '</h3>' +
-      '<p class="muted">' + b.studentCount + ' students, ' + b.teacherCount + ' teachers, ' + b.roomCount + ' rooms' +
-      (dateStr ? ' — ' + dateStr : '') + '</p>' +
-      '<button class="btn btn--sm btn--primary btn-restore-backup" data-name="' + esc(b.backupName) + '">Restore</button> ' +
-      '<button class="btn btn--sm btn--danger btn-delete-backup" data-name="' + esc(b.backupName) + '">Delete</button>';
-    container.appendChild(div);
-  });
-  container.addEventListener('click', function (e) {
-    if (e.target.classList.contains('btn-restore-backup')) {
-      var name = e.target.dataset.name;
-      if (!confirm('Restore backup "' + name + '"? This replaces ALL current students, teachers, rooms, assignments, staging, and filler cells.')) return;
+  // =========================================================================
+  // Designer Layout Save/Load
+  // =========================================================================
+
+  function refreshDesignerLayouts() {
+    google.script.run.withSuccessHandler(function (d) {
+      APP.designerLayouts = d || [];
+      renderDesignerLayoutList();
+    }).withFailureHandler(function () { }).getDesignerLayouts();
+  }
+
+  function renderDesignerLayoutList() {
+    var container = document.getElementById('designer-layout-list');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!APP.designerLayouts.length) { container.innerHTML = '<p class="muted">No saved layouts.</p>'; return; }
+    APP.designerLayouts.forEach(function (layout) {
+      var div = document.createElement('div'); div.className = 'layout-item';
+      div.innerHTML = '<span class="layout-item-name">' + esc(layout.layoutName) + '</span>' +
+        '<span class="layout-item-meta">' + layout.roomCount + ' rooms</span>' +
+        '<button class="btn btn--sm btn--primary btn-load-layout" data-name="' + esc(layout.layoutName) + '">Load</button>' +
+        '<button class="btn btn--sm btn--danger btn-delete-layout" data-name="' + esc(layout.layoutName) + '">Del</button>';
+      container.appendChild(div);
+    });
+    container.addEventListener('click', function (e) {
+      if (e.target.classList.contains('btn-load-layout')) {
+        var name = e.target.dataset.name;
+        if (APP.designerRooms.length && !confirm('Load "' + name + '"? This replaces the current canvas.')) return;
+        showLoading(true);
+        google.script.run.withSuccessHandler(function (res) {
+          showLoading(false);
+          if (res.success) {
+            APP.designerRooms = res.rooms || [];
+            APP.designerSelectedId = null;
+            renderDesignerCanvas();
+            renderDesignerProps();
+            toast('Layout "' + name + '" loaded');
+          } else { toast(res.message || 'Failed to load layout'); }
+        }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).loadDesignerLayout(name);
+      }
+      if (e.target.classList.contains('btn-delete-layout')) {
+        var name = e.target.dataset.name;
+        if (!confirm('Delete layout "' + name + '"?')) return;
+        google.script.run.withSuccessHandler(function () { refreshDesignerLayouts(); toast('Layout deleted'); })
+          .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteDesignerLayout(name);
+      }
+    });
+  }
+
+  // =========================================================================
+  // Full Data Backup
+  // =========================================================================
+
+  function initBackupView() {
+    var createBtn = document.getElementById('btn-create-backup');
+    createBtn.addEventListener('click', function () {
+      var name = document.getElementById('backup-name').value.trim();
+      if (!name) { toast('Enter a backup name'); return; }
+      disableBtn(createBtn, 'Saving...');
       showLoading(true);
       google.script.run.withSuccessHandler(function (res) {
-        if (res.success) { refreshAll(); toast(res.message); }
-        else { toast(res.message || 'Restore failed'); showLoading(false); }
-      }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).restoreFullBackup(name);
-    }
-    if (e.target.classList.contains('btn-delete-backup')) {
-      var name = e.target.dataset.name;
-      if (!confirm('Delete backup "' + name + '"?')) return;
-      google.script.run.withSuccessHandler(function () { refreshBackups(); toast('Backup deleted'); })
-        .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteFullBackup(name);
-    }
-  });
-}
+        document.getElementById('backup-name').value = '';
+        enableBtn(createBtn);
+        showLoading(false);
+        refreshBackups();
+        toast(res.message);
+      }).withFailureHandler(function (e) {
+        toast('Error: ' + e.message);
+        showLoading(false);
+        enableBtn(createBtn);
+      }).createFullBackup(name);
+    });
+  }
+
+  function refreshBackups() {
+    google.script.run.withSuccessHandler(function (d) {
+      APP.backups = d || [];
+      renderBackupList();
+    }).withFailureHandler(function () { }).getFullBackups();
+  }
+
+  function renderBackupList() {
+    var container = document.getElementById('backup-list');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!APP.backups.length) { container.innerHTML = '<p class="muted">No saved backups.</p>'; return; }
+    APP.backups.forEach(function (b) {
+      var div = document.createElement('div'); div.className = 'template-card';
+      var dateStr = b.createdAt ? new Date(b.createdAt).toLocaleString() : '';
+      div.innerHTML = '<h3>' + esc(b.backupName) + '</h3>' +
+        '<p class="muted">' + b.studentCount + ' students, ' + b.teacherCount + ' teachers, ' + b.roomCount + ' rooms' +
+        (dateStr ? ' — ' + dateStr : '') + '</p>' +
+        '<button class="btn btn--sm btn--primary btn-restore-backup" data-name="' + esc(b.backupName) + '">Restore</button> ' +
+        '<button class="btn btn--sm btn--danger btn-delete-backup" data-name="' + esc(b.backupName) + '">Delete</button>';
+      container.appendChild(div);
+    });
+    container.addEventListener('click', function (e) {
+      if (e.target.classList.contains('btn-restore-backup')) {
+        var name = e.target.dataset.name;
+        if (!confirm('Restore backup "' + name + '"? This replaces ALL current students, teachers, rooms, assignments, staging, and filler cells.')) return;
+        showLoading(true);
+        google.script.run.withSuccessHandler(function (res) {
+          if (res.success) { refreshAll(); toast(res.message); }
+          else { toast(res.message || 'Restore failed'); showLoading(false); }
+        }).withFailureHandler(function (err) { toast('Error: ' + err.message); showLoading(false); }).restoreFullBackup(name);
+      }
+      if (e.target.classList.contains('btn-delete-backup')) {
+        var name = e.target.dataset.name;
+        if (!confirm('Delete backup "' + name + '"?')) return;
+        google.script.run.withSuccessHandler(function () { refreshBackups(); toast('Backup deleted'); })
+          .withFailureHandler(function (err) { toast('Error: ' + err.message); }).deleteFullBackup(name);
+      }
+    });
+  }
 </script>

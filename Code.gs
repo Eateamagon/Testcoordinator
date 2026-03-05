@@ -74,6 +74,32 @@ function ensureSheets_() {
   getOrCreateSheet_('Backups', [
     'BackupName', 'CreatedAt', 'DataJSON'
   ]);
+  getOrCreateSheet_('AuditLog', [
+    'Timestamp', 'User', 'Action', 'Details', 'Success', 'ErrorMessage'
+  ]);
+}
+
+/**
+ * Log an action to the AuditLog sheet.
+ * @param {string} action
+ * @param {string} details
+ * @param {boolean} success
+ * @param {string} [error]
+ */
+function logAudit_(action, details, success, error) {
+  try {
+    var sheet = getOrCreateSheet_('AuditLog');
+    sheet.appendRow([
+      new Date(),
+      Session.getActiveUser().getEmail(),
+      action,
+      details || '',
+      success ? 'Y' : 'N',
+      error || ''
+    ]);
+  } catch (e) {
+    Logger.log('FAILED TO LOG AUDIT: ' + e.toString());
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -81,61 +107,91 @@ function ensureSheets_() {
 // ---------------------------------------------------------------------------
 
 function addStudent(data) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Students');
-  sheet.appendRow([
-    data.studentId, data.name, data.grade,
-    data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
-    data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
-    data.prompting ? 'Y' : '', data.otherAccommodations || ''
-  ]);
-  return { success: true };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Students');
+    sheet.appendRow([
+      data.studentId, data.name, data.grade,
+      data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
+      data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
+      data.prompting ? 'Y' : '', data.otherAccommodations || ''
+    ]);
+    logAudit_('Add Student', 'ID: ' + data.studentId + ', Name: ' + data.name, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Add Student', 'ID: ' + (data ? data.studentId : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function getStudents() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Students');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var students = [];
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    students.push({
-      studentId: String(row[0]), name: String(row[1]), grade: String(row[2]),
-      smallGroup: row[3] === 'Y', readAloud: row[4] === 'Y',
-      oneToOne: row[5] === 'Y', proximity: row[6] === 'Y',
-      prompting: row[7] === 'Y', otherAccommodations: String(row[8] || '')
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Students');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var students = [];
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      students.push({
+        studentId: String(row[0]), name: String(row[1]), grade: String(row[2]),
+        smallGroup: row[3] === 'Y', readAloud: row[4] === 'Y',
+        oneToOne: row[5] === 'Y', proximity: row[6] === 'Y',
+        prompting: row[7] === 'Y', otherAccommodations: String(row[8] || '')
+      });
+    }
+    return students;
+  } catch (e) {
+    logAudit_('Get Students', '', false, e.toString());
+    throw e; // Rethrow for client-side failure handler
   }
-  return students;
 }
 
 function deleteStudent(studentId) {
-  var sheet = getOrCreateSheet_('Students');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(studentId)) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('Students');
+    var data = sheet.getDataRange().getValues();
+    var found = false;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(studentId)) {
+        sheet.deleteRow(i + 1);
+        found = true;
+        break;
+      }
+    }
+    removeAssignmentsForStudent_(studentId);
+    removeStagingForStudent_(studentId);
+    logAudit_('Delete Student', 'ID: ' + studentId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Student', 'ID: ' + studentId, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  removeAssignmentsForStudent_(studentId);
-  removeStagingForStudent_(studentId);
-  return { success: true };
 }
 
 function updateStudent(data) {
-  var sheet = getOrCreateSheet_('Students');
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(data.studentId)) {
-      sheet.getRange(i + 1, 1, 1, 9).setValues([[
-        data.studentId, data.name, data.grade,
-        data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
-        data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
-        data.prompting ? 'Y' : '', data.otherAccommodations || ''
-      ]]);
-      break;
+  try {
+    var sheet = getOrCreateSheet_('Students');
+    var rows = sheet.getDataRange().getValues();
+    var found = false;
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === String(data.studentId)) {
+        sheet.getRange(i + 1, 1, 1, 9).setValues([[
+          data.studentId, data.name, data.grade,
+          data.smallGroup ? 'Y' : '', data.readAloud ? 'Y' : '',
+          data.oneToOne ? 'Y' : '', data.proximity ? 'Y' : '',
+          data.prompting ? 'Y' : '', data.otherAccommodations || ''
+        ]]);
+        found = true;
+        break;
+      }
     }
+    logAudit_('Update Student', 'ID: ' + data.studentId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Update Student', 'ID: ' + (data ? data.studentId : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -143,49 +199,72 @@ function updateStudent(data) {
 // ---------------------------------------------------------------------------
 
 function addTeacher(data) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Teachers');
-  sheet.appendRow([data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || '']);
-  return { success: true };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Teachers');
+    sheet.appendRow([data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || '']);
+    logAudit_('Add Teacher', 'ID: ' + data.teacherId + ', Name: ' + data.name, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Add Teacher', 'ID: ' + (data ? data.teacherId : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function getTeachers() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Teachers');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var teachers = [];
-  for (var i = 1; i < data.length; i++) {
-    teachers.push({
-      teacherId: String(data[i][0]), name: String(data[i][1]),
-      roomNumber: String(data[i][2] || ''), hallway: String(data[i][3] || ''),
-      grade: String(data[i][4] || '')
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Teachers');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var teachers = [];
+    for (var i = 1; i < data.length; i++) {
+      teachers.push({
+        teacherId: String(data[i][0]), name: String(data[i][1]),
+        roomNumber: String(data[i][2] || ''), hallway: String(data[i][3] || ''),
+        grade: String(data[i][4] || '')
+      });
+    }
+    return teachers;
+  } catch (e) {
+    logAudit_('Get Teachers', '', false, e.toString());
+    throw e;
   }
-  return teachers;
 }
 
 function updateTeacher(data) {
-  var sheet = getOrCreateSheet_('Teachers');
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(data.teacherId)) {
-      sheet.getRange(i + 1, 1, 1, 5).setValues([[
-        data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || ''
-      ]]);
-      break;
+  try {
+    var sheet = getOrCreateSheet_('Teachers');
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === String(data.teacherId)) {
+        sheet.getRange(i + 1, 1, 1, 5).setValues([[
+          data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || ''
+        ]]);
+        break;
+      }
     }
+    logAudit_('Update Teacher', 'ID: ' + data.teacherId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Update Teacher', 'ID: ' + (data ? data.teacherId : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 function deleteTeacher(teacherId) {
-  var sheet = getOrCreateSheet_('Teachers');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(teacherId)) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('Teachers');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(teacherId)) { sheet.deleteRow(i + 1); break; }
+    }
+    logAudit_('Delete Teacher', 'ID: ' + teacherId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Teacher', 'ID: ' + teacherId, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -193,61 +272,84 @@ function deleteTeacher(teacherId) {
 // ---------------------------------------------------------------------------
 
 function addRoom(data) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Rooms');
-  var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
-  sheet.appendRow([
-    data.roomName, data.roomNumber || '', data.hallway || '',
-    parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
-    data.teacherId || '', data.grade || '', data.floor || '1'
-  ]);
-  return { success: true };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Rooms');
+    var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
+    sheet.appendRow([
+      data.roomName, data.roomNumber || '', data.hallway || '',
+      parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
+      data.teacherId || '', data.grade || '', data.floor || '1'
+    ]);
+    logAudit_('Add Room', 'Name: ' + data.roomName + ', Cap: ' + cap, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Add Room', 'Name: ' + (data ? data.roomName : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function getRooms() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Rooms');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var rooms = [];
-  for (var i = 1; i < data.length; i++) {
-    rooms.push({
-      roomName: String(data[i][0]), roomNumber: String(data[i][1] || ''),
-      hallway: String(data[i][2] || ''), rows: parseInt(data[i][3], 10),
-      columns: parseInt(data[i][4], 10), maxCapacity: parseInt(data[i][5], 10) || 0,
-      teacherId: String(data[i][6] || ''), grade: String(data[i][7] || ''),
-      floor: String(data[i][8] || '1')
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Rooms');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var rooms = [];
+    for (var i = 1; i < data.length; i++) {
+      rooms.push({
+        roomName: String(data[i][0]), roomNumber: String(data[i][1] || ''),
+        hallway: String(data[i][2] || ''), rows: parseInt(data[i][3], 10),
+        columns: parseInt(data[i][4], 10), maxCapacity: parseInt(data[i][5], 10) || 0,
+        teacherId: String(data[i][6] || ''), grade: String(data[i][7] || ''),
+        floor: String(data[i][8] || '1')
+      });
+    }
+    return rooms;
+  } catch (e) {
+    logAudit_('Get Rooms', '', false, e.toString());
+    throw e;
   }
-  return rooms;
 }
 
 function updateRoom(data) {
-  var sheet = getOrCreateSheet_('Rooms');
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === data.roomName) {
-      var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
-      sheet.getRange(i + 1, 1, 1, 9).setValues([[
-        data.roomName, data.roomNumber || '', data.hallway || '',
-        parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
-        data.teacherId || '', data.grade || '', data.floor || '1'
-      ]]);
-      break;
+  try {
+    var sheet = getOrCreateSheet_('Rooms');
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === data.roomName) {
+        var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
+        sheet.getRange(i + 1, 1, 1, 9).setValues([[
+          data.roomName, data.roomNumber || '', data.hallway || '',
+          parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
+          data.teacherId || '', data.grade || '', data.floor || '1'
+        ]]);
+        break;
+      }
     }
+    logAudit_('Update Room', 'Name: ' + data.roomName, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Update Room', 'Name: ' + (data ? data.roomName : 'N/A'), false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 function deleteRoom(roomName) {
-  var sheet = getOrCreateSheet_('Rooms');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === roomName) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('Rooms');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === roomName) { sheet.deleteRow(i + 1); break; }
+    }
+    removeAssignmentsForRoom_(roomName);
+    removeFillerCellsForRoom_(roomName);
+    logAudit_('Delete Room', 'Name: ' + roomName, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Room', 'Name: ' + roomName, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  removeAssignmentsForRoom_(roomName);
-  removeFillerCellsForRoom_(roomName);
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,37 +357,49 @@ function deleteRoom(roomName) {
 // ---------------------------------------------------------------------------
 
 function getFillerCells() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('FillerCells');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var cells = [];
-  for (var i = 1; i < data.length; i++) {
-    cells.push({
-      roomName: String(data[i][0]),
-      row: parseInt(data[i][1], 10),
-      column: parseInt(data[i][2], 10)
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('FillerCells');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var cells = [];
+    for (var i = 1; i < data.length; i++) {
+      cells.push({
+        roomName: String(data[i][0]),
+        row: parseInt(data[i][1], 10),
+        column: parseInt(data[i][2], 10)
+      });
+    }
+    return cells;
+  } catch (e) {
+    logAudit_('Get Filler Cells', '', false, e.toString());
+    throw e;
   }
-  return cells;
 }
 
 function toggleFillerCell(roomName, row, col) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('FillerCells');
-  var data = sheet.getDataRange().getValues();
-  // Check if already exists — if so, remove it
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][0]) === roomName &&
-        parseInt(data[i][1], 10) === row &&
-        parseInt(data[i][2], 10) === col) {
-      sheet.deleteRow(i + 1);
-      return { success: true, isFiller: false };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('FillerCells');
+    var data = sheet.getDataRange().getValues();
+    // Check if already exists — if so, remove it
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === roomName &&
+          parseInt(data[i][1], 10) === row &&
+          parseInt(data[i][2], 10) === col) {
+        sheet.deleteRow(i + 1);
+        logAudit_('Toggle Filler', 'Room: ' + roomName + ', R' + row + 'C' + col + ' OFF', true);
+        return { success: true, isFiller: false };
+      }
     }
+    // Add it
+    sheet.appendRow([roomName, row, col]);
+    logAudit_('Toggle Filler', 'Room: ' + roomName + ', R' + row + 'C' + col + ' ON', true);
+    return { success: true, isFiller: true };
+  } catch (e) {
+    logAudit_('Toggle Filler', 'Room: ' + roomName, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  // Add it
-  sheet.appendRow([roomName, row, col]);
-  return { success: true, isFiller: true };
 }
 
 function removeFillerCellsForRoom_(roomName) {
@@ -301,31 +415,48 @@ function removeFillerCellsForRoom_(roomName) {
 // ---------------------------------------------------------------------------
 
 function saveAssignment(studentId, roomName, row, col) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Assignments');
-  removeAssignmentsForStudent_(studentId);
-  sheet.appendRow([studentId, roomName, row, col]);
-  return { success: true };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Assignments');
+    removeAssignmentsForStudent_(studentId);
+    sheet.appendRow([studentId, roomName, row, col]);
+    logAudit_('Save Assignment', 'SID: ' + studentId + ', Room: ' + roomName + ' (R' + row + 'C' + col + ')', true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Save Assignment', 'SID: ' + studentId, false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function removeAssignment(studentId) {
-  removeAssignmentsForStudent_(studentId);
-  return { success: true };
+  try {
+    removeAssignmentsForStudent_(studentId);
+    logAudit_('Remove Assignment', 'SID: ' + studentId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Remove Assignment', 'SID: ' + studentId, false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function getAssignments() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Assignments');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var assignments = [];
-  for (var i = 1; i < data.length; i++) {
-    assignments.push({
-      studentId: String(data[i][0]), roomName: String(data[i][1]),
-      row: parseInt(data[i][2], 10), column: parseInt(data[i][3], 10)
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Assignments');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var assignments = [];
+    for (var i = 1; i < data.length; i++) {
+      assignments.push({
+        studentId: String(data[i][0]), roomName: String(data[i][1]),
+        row: parseInt(data[i][2], 10), column: parseInt(data[i][3], 10)
+      });
+    }
+    return assignments;
+  } catch (e) {
+    logAudit_('Get Assignments', '', false, e.toString());
+    throw e;
   }
-  return assignments;
 }
 
 function removeAssignmentsForStudent_(studentId) {
@@ -365,43 +496,67 @@ function getStagingGroups() {
 }
 
 function createStagingGroup(groupName) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Staging');
-  var gid = 'G' + Date.now();
-  sheet.appendRow([gid, groupName, '']);
-  return { success: true, groupId: gid };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Staging');
+    var gid = 'G' + Date.now();
+    sheet.appendRow([gid, groupName, '']);
+    logAudit_('Create Staging Group', 'Name: ' + groupName + ', GID: ' + gid, true);
+    return { success: true, groupId: gid };
+  } catch (e) {
+    logAudit_('Create Staging Group', 'Name: ' + groupName, false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 function addStudentToStagingGroup(groupId, studentId) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Staging');
-  var data = sheet.getDataRange().getValues();
-  var gName = '';
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === groupId) { gName = String(data[i][1]); break; }
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Staging');
+    var data = sheet.getDataRange().getValues();
+    var gName = '';
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === groupId) { gName = String(data[i][1]); break; }
+    }
+    sheet.appendRow([groupId, gName, studentId]);
+    logAudit_('Staging: Add Student', 'GID: ' + groupId + ', SID: ' + studentId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Staging: Add Student', 'GID: ' + groupId + ', SID: ' + studentId, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  sheet.appendRow([groupId, gName, studentId]);
-  return { success: true };
 }
 
 function removeStudentFromStagingGroup(groupId, studentId) {
-  var sheet = getOrCreateSheet_('Staging');
-  var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][0]) === groupId && String(data[i][2]) === studentId) {
-      sheet.deleteRow(i + 1); break;
+  try {
+    var sheet = getOrCreateSheet_('Staging');
+    var data = sheet.getDataRange().getValues();
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === groupId && String(data[i][2]) === studentId) {
+        sheet.deleteRow(i + 1); break;
+      }
     }
+    logAudit_('Staging: Remove Student', 'GID: ' + groupId + ', SID: ' + studentId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Staging: Remove Student', 'GID: ' + groupId + ', SID: ' + studentId, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 function deleteStagingGroup(groupId) {
-  var sheet = getOrCreateSheet_('Staging');
-  var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][0]) === groupId) sheet.deleteRow(i + 1);
+  try {
+    var sheet = getOrCreateSheet_('Staging');
+    var data = sheet.getDataRange().getValues();
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === groupId) sheet.deleteRow(i + 1);
+    }
+    logAudit_('Delete Staging Group', 'GID: ' + groupId, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Staging Group', 'GID: ' + groupId, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 function removeStagingForStudent_(studentId) {
@@ -413,42 +568,49 @@ function removeStagingForStudent_(studentId) {
 }
 
 function placeStagingGroupInRoom(groupId, roomName) {
-  ensureSheets_();
-  var groups = getStagingGroups();
-  var group = groups.filter(function (g) { return g.groupId === groupId; })[0];
-  if (!group) return { success: false, message: 'Group not found.' };
-  var rooms = getRooms();
-  var room = rooms.filter(function (r) { return r.roomName === roomName; })[0];
-  if (!room) return { success: false, message: 'Room not found.' };
+  try {
+    ensureSheets_();
+    var groups = getStagingGroups();
+    var group = groups.filter(function (g) { return g.groupId === groupId; })[0];
+    if (!group) return { success: false, message: 'Group not found.' };
+    var rooms = getRooms();
+    var room = rooms.filter(function (r) { return r.roomName === roomName; })[0];
+    if (!room) return { success: false, message: 'Room not found.' };
 
-  var currentAssignments = getAssignments();
-  var fillerCells = getFillerCells();
-  var seatMap = {};
-  currentAssignments.forEach(function (a) {
-    if (a.roomName === roomName) seatMap[a.row + ',' + a.column] = true;
-  });
-  fillerCells.forEach(function (f) {
-    if (f.roomName === roomName) seatMap[f.row + ',' + f.column] = true;
-  });
+    var currentAssignments = getAssignments();
+    var fillerCells = getFillerCells();
+    var seatMap = {};
+    currentAssignments.forEach(function (a) {
+      if (a.roomName === roomName) seatMap[a.row + ',' + a.column] = true;
+    });
+    fillerCells.forEach(function (f) {
+      if (f.roomName === roomName) seatMap[f.row + ',' + f.column] = true;
+    });
 
-  var sheet = getOrCreateSheet_('Assignments');
-  var placed = 0;
-  group.studentIds.forEach(function (sid) {
-    if (!sid) return;
-    removeAssignmentsForStudent_(sid);
-    for (var r = 1; r <= room.rows; r++) {
-      for (var c = 1; c <= room.columns; c++) {
-        var key = r + ',' + c;
-        if (!seatMap[key]) {
-          seatMap[key] = true;
-          sheet.appendRow([sid, roomName, r, c]);
-          placed++;
-          return;
+    var sheet = getOrCreateSheet_('Assignments');
+    var placed = 0;
+    group.studentIds.forEach(function (sid) {
+      if (!sid) return;
+      removeAssignmentsForStudent_(sid);
+      for (var r = 1; r <= room.rows; r++) {
+        for (var c = 1; c <= room.columns; c++) {
+          var key = r + ',' + c;
+          if (!seatMap[key]) {
+            seatMap[key] = true;
+            sheet.appendRow([sid, roomName, r, c]);
+            placed++;
+            return;
+          }
         }
       }
-    }
-  });
-  return { success: true, message: placed + ' student(s) placed in ' + roomName + '.' };
+    });
+    var msg = placed + ' student(s) placed in ' + roomName + '.';
+    logAudit_('Place Staging Group', 'GID: ' + groupId + ', Room: ' + roomName + ', Stat: ' + msg, true);
+    return { success: true, message: msg };
+  } catch (e) {
+    logAudit_('Place Staging Group', 'GID: ' + groupId + ', Room: ' + roomName, false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -468,57 +630,76 @@ function getTemplates() {
 }
 
 function saveTemplate(templateName) {
-  ensureSheets_();
-  var teachers = getTeachers();
-  var rooms = getRooms();
-  var payload = JSON.stringify({ teachers: teachers, rooms: rooms });
-  var sheet = getOrCreateSheet_('Templates');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === templateName) {
-      sheet.getRange(i + 1, 2).setValue(payload);
-      return { success: true, message: 'Template "' + templateName + '" updated.' };
+  try {
+    ensureSheets_();
+    var teachers = getTeachers();
+    var rooms = getRooms();
+    var payload = JSON.stringify({ teachers: teachers, rooms: rooms });
+    var sheet = getOrCreateSheet_('Templates');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === templateName) {
+        sheet.getRange(i + 1, 2).setValue(payload);
+        logAudit_('Save Template', 'Name: ' + templateName + ' (Updated)', true);
+        return { success: true, message: 'Template "' + templateName + '" updated.' };
+      }
     }
+    sheet.appendRow([templateName, payload]);
+    logAudit_('Save Template', 'Name: ' + templateName + ' (New)', true);
+    return { success: true, message: 'Template "' + templateName + '" saved.' };
+  } catch (e) {
+    logAudit_('Save Template', 'Name: ' + templateName, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  sheet.appendRow([templateName, payload]);
-  return { success: true, message: 'Template "' + templateName + '" saved.' };
 }
 
 function loadTemplate(templateName) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Templates');
-  var data = sheet.getDataRange().getValues();
-  var payload = null;
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === templateName) { payload = JSON.parse(data[i][1] || '{}'); break; }
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Templates');
+    var data = sheet.getDataRange().getValues();
+    var payload = null;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === templateName) { payload = JSON.parse(data[i][1] || '{}'); break; }
+    }
+    if (!payload) return { success: false, message: 'Template not found.' };
+
+    var tSheet = getOrCreateSheet_('Teachers');
+    if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+    (payload.teachers || []).forEach(function (t) {
+      tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
+    });
+
+    var rSheet = getOrCreateSheet_('Rooms');
+    if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+    (payload.rooms || []).forEach(function (r) {
+      rSheet.appendRow([
+        r.roomName, r.roomNumber || '', r.hallway || '',
+        r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
+        r.teacherId || '', r.grade || '', r.floor || '1'
+      ]);
+    });
+    logAudit_('Load Template', 'Name: ' + templateName, true);
+    return { success: true, message: 'Template "' + templateName + '" loaded.' };
+  } catch (e) {
+    logAudit_('Load Template', 'Name: ' + templateName, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  if (!payload) return { success: false, message: 'Template not found.' };
-
-  var tSheet = getOrCreateSheet_('Teachers');
-  if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
-  (payload.teachers || []).forEach(function (t) {
-    tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
-  });
-
-  var rSheet = getOrCreateSheet_('Rooms');
-  if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
-  (payload.rooms || []).forEach(function (r) {
-    rSheet.appendRow([
-      r.roomName, r.roomNumber || '', r.hallway || '',
-      r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
-      r.teacherId || '', r.grade || '', r.floor || '1'
-    ]);
-  });
-  return { success: true, message: 'Template "' + templateName + '" loaded.' };
 }
 
 function deleteTemplate(templateName) {
-  var sheet = getOrCreateSheet_('Templates');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === templateName) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('Templates');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === templateName) { sheet.deleteRow(i + 1); break; }
+    }
+    logAudit_('Delete Template', 'Name: ' + templateName, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Template', 'Name: ' + templateName, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -621,15 +802,22 @@ function generateRecommendations(smallGroupLimit, gradeFilter) {
     }
   });
 
+  logAudit_('Generate Recommendations', 'Limit: ' + smallGroupLimit + ', Grade: ' + (gradeFilter || 'All'), true);
   return assignments;
 }
 
 function applyRecommendations(assignments) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Assignments');
-  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
-  assignments.forEach(function (a) { sheet.appendRow([a.studentId, a.roomName, a.row, a.column]); });
-  return { success: true };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Assignments');
+    if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+    assignments.forEach(function (a) { sheet.appendRow([a.studentId, a.roomName, a.row, a.column]); });
+    logAudit_('Apply Recommendations', 'Count: ' + assignments.length, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Apply Recommendations', '', false, e.toString());
+    return { success: false, message: e.toString() };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +904,7 @@ function finalizeLayout() {
     layoutSheet.getRange(2, 1).setFontStyle('italic');
   });
 
+  logAudit_('Finalize Layout', 'Rooms: ' + rooms.length, true);
   return { success: true, message: 'Layout sheets created for ' + rooms.length + ' room(s).' };
 }
 
@@ -861,7 +1050,8 @@ function generateExportHTML() {
   });
 
   html.push('</body></html>');
-  return html.join('\n');
+  logAudit_('Generate Export', '', true);
+  return html.join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -954,55 +1144,81 @@ function loadExampleData() {
 // Designer Layout CRUD
 // ---------------------------------------------------------------------------
 
-function saveDesignerLayout(name, roomsJson) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('DesignerLayouts');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) {
-      sheet.getRange(i + 1, 2).setValue(roomsJson);
-      return { success: true, message: 'Layout "' + name + '" updated.' };
+function saveDesignerLayout(name, json) {
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('DesignerLayouts');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) {
+        sheet.getRange(i + 1, 2).setValue(json);
+        logAudit_('Save Designer Layout', 'Name: ' + name + ' (Updated)', true);
+        return { success: true, message: 'Layout "' + name + '" updated.' };
+      }
     }
+    sheet.appendRow([name, json]);
+    logAudit_('Save Designer Layout', 'Name: ' + name + ' (New)', true);
+    return { success: true, message: 'Layout "' + name + '" saved.' };
+  } catch (e) {
+    logAudit_('Save Designer Layout', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  sheet.appendRow([name, roomsJson]);
-  return { success: true, message: 'Layout "' + name + '" saved.' };
 }
 
 function getDesignerLayouts() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('DesignerLayouts');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var layouts = [];
-  for (var i = 1; i < data.length; i++) {
-    var rooms = JSON.parse(data[i][1] || '[]');
-    layouts.push({
-      layoutName: String(data[i][0]),
-      roomCount: rooms.length
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('DesignerLayouts');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var layouts = [];
+    for (var i = 1; i < data.length; i++) {
+      var rooms = JSON.parse(data[i][1] || '[]');
+      layouts.push({
+        layoutName: String(data[i][0]),
+        roomCount: rooms.length
+      });
+    }
+    logAudit_('Get Designer Layouts', '', true);
+    return layouts;
+  } catch (e) {
+    logAudit_('Get Designer Layouts', '', false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return layouts;
 }
 
 function loadDesignerLayout(name) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('DesignerLayouts');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) {
-      return { success: true, rooms: JSON.parse(data[i][1] || '[]') };
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('DesignerLayouts');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) {
+        logAudit_('Load Designer Layout', 'Name: ' + name, true);
+        return { success: true, rooms: JSON.parse(data[i][1] || '[]') };
+      }
     }
+    logAudit_('Load Designer Layout', 'Name: ' + name, false, 'Layout not found.');
+    return { success: false, message: 'Layout not found.' };
+  } catch (e) {
+    logAudit_('Load Designer Layout', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: false, message: 'Layout not found.' };
 }
 
 function deleteDesignerLayout(name) {
-  var sheet = getOrCreateSheet_('DesignerLayouts');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('DesignerLayouts');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+    }
+    logAudit_('Delete Designer Layout', 'Name: ' + name, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Designer Layout', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,117 +1226,149 @@ function deleteDesignerLayout(name) {
 // ---------------------------------------------------------------------------
 
 function createFullBackup(name) {
-  ensureSheets_();
-  var payload = {
-    students: getStudents(),
-    teachers: getTeachers(),
-    rooms: getRooms(),
-    assignments: getAssignments(),
-    stagingGroups: getStagingGroups(),
-    fillerCells: getFillerCells()
-  };
-  var sheet = getOrCreateSheet_('Backups');
-  var data = sheet.getDataRange().getValues();
-  var now = new Date().toISOString();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) {
-      sheet.getRange(i + 1, 2, 1, 2).setValues([[now, JSON.stringify(payload)]]);
-      return { success: true, message: 'Backup "' + name + '" updated.' };
+  try {
+    ensureSheets_();
+    var students = getStudents();
+    var teachers = getTeachers();
+    var rooms = getRooms();
+    var assignments = getAssignments();
+    var staging = getStagingGroups();
+    var filler = getFillerCells();
+
+    var payload = JSON.stringify({
+      students: students, teachers: teachers, rooms: rooms,
+      assignments: assignments, stagingGroups: staging, fillerCells: filler
+    });
+
+    var sheet = getOrCreateSheet_('Backups');
+    var data = sheet.getDataRange().getValues();
+    var now = new Date().toISOString();
+    var updated = false;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) {
+        sheet.getRange(i + 1, 2, 1, 2).setValues([[now, payload]]);
+        updated = true;
+        break;
+      }
     }
+    if (updated) {
+      logAudit_('Create Backup', 'Name: ' + name + ' (Updated)', true);
+      return { success: true, message: 'Backup "' + name + '" updated.' };
+    } else {
+      sheet.appendRow([name, now, payload]);
+      logAudit_('Create Backup', 'Name: ' + name + ' (New)', true);
+      return { success: true, message: 'Backup "' + name + '" saved.' };
+    }
+  } catch (e) {
+    logAudit_('Create Backup', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  sheet.appendRow([name, now, JSON.stringify(payload)]);
-  return { success: true, message: 'Backup "' + name + '" saved.' };
 }
 
 function getFullBackups() {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Backups');
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  var backups = [];
-  for (var i = 1; i < data.length; i++) {
-    var payload = JSON.parse(data[i][2] || '{}');
-    backups.push({
-      backupName: String(data[i][0]),
-      createdAt: String(data[i][1]),
-      studentCount: (payload.students || []).length,
-      teacherCount: (payload.teachers || []).length,
-      roomCount: (payload.rooms || []).length
-    });
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Backups');
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    var backups = [];
+    for (var i = 1; i < data.length; i++) {
+      var payload = JSON.parse(data[i][2] || '{}');
+      backups.push({
+        backupName: String(data[i][0]),
+        createdAt: String(data[i][1]),
+        studentCount: (payload.students || []).length,
+        teacherCount: (payload.teachers || []).length,
+        roomCount: (payload.rooms || []).length
+      });
+    }
+    logAudit_('Get Backups', '', true);
+    return backups;
+  } catch (e) {
+    logAudit_('Get Backups', '', false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return backups;
 }
 
 function restoreFullBackup(name) {
-  ensureSheets_();
-  var sheet = getOrCreateSheet_('Backups');
-  var data = sheet.getDataRange().getValues();
-  var payload = null;
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) {
-      payload = JSON.parse(data[i][2] || '{}');
-      break;
+  try {
+    ensureSheets_();
+    var sheet = getOrCreateSheet_('Backups');
+    var data = sheet.getDataRange().getValues();
+    var payload = null;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) { payload = JSON.parse(data[i][2] || '{}'); break; }
     }
+    if (!payload) {
+      logAudit_('Restore Backup', 'Name: ' + name, false, 'Backup not found.');
+      return { success: false, message: 'Backup not found.' };
+    }
+
+    // Clear and restore each sheet
+    // Students
+    var sSheet = getOrCreateSheet_('Students');
+    if (sSheet.getLastRow() > 1) sSheet.getRange(2, 1, sSheet.getLastRow() - 1, sSheet.getLastColumn()).clearContent();
+    (payload.students || []).forEach(function (s) {
+      sSheet.appendRow([
+        s.studentId, s.name, s.grade,
+        s.smallGroup ? 'Y' : '', s.readAloud ? 'Y' : '',
+        s.oneToOne ? 'Y' : '', s.proximity ? 'Y' : '',
+        s.prompting ? 'Y' : '', s.otherAccommodations || ''
+      ]);
+    });
+
+    // Teachers
+    var tSheet = getOrCreateSheet_('Teachers');
+    if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+    (payload.teachers || []).forEach(function (t) {
+      tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
+    });
+
+    // Rooms
+    var rSheet = getOrCreateSheet_('Rooms');
+    if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+    (payload.rooms || []).forEach(function (r) {
+      rSheet.appendRow([
+        r.roomName, r.roomNumber || '', r.hallway || '',
+        r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
+        r.teacherId || '', r.grade || '', r.floor || '1'
+      ]);
+    });
+
+    // Assignments
+    var aSheet = getOrCreateSheet_('Assignments');
+    if (aSheet.getLastRow() > 1) aSheet.getRange(2, 1, aSheet.getLastRow() - 1, aSheet.getLastColumn()).clearContent();
+    (payload.assignments || []).forEach(function (a) {
+      aSheet.appendRow([a.studentId, a.roomName, a.row, a.column]);
+    });
+
+    // Staging
+    var stSheet = getOrCreateSheet_('Staging');
+    if (stSheet.getLastRow() > 1) stSheet.getRange(2, 1, stSheet.getLastRow() - 1, stSheet.getLastColumn()).clearContent();
+    (payload.stagingGroups || []).forEach(function (g) {
+      if (!g.studentIds || !g.studentIds.length) {
+        stSheet.appendRow([g.groupId, g.groupName, '']);
+      } else {
+        g.studentIds.forEach(function (sid) { stSheet.appendRow([g.groupId, g.groupName, sid]); });
+      }
+    });
+
+    // Filler Cells
+    var fSheet = getOrCreateSheet_('FillerCells');
+    if (fSheet.getLastRow() > 1) fSheet.getRange(2, 1, fSheet.getLastRow() - 1, fSheet.getLastColumn()).clearContent();
+    (payload.fillerCells || []).forEach(function (f) {
+      fSheet.appendRow([f.roomName, f.row, f.column]);
+    });
+
+    logAudit_('Restore Backup', 'Name: ' + name, true);
+    return { success: true, message: 'Backup "' + name + '" restored — ' +
+      (payload.students || []).length + ' students, ' +
+      (payload.teachers || []).length + ' teachers, ' +
+      (payload.rooms || []).length + ' rooms.' };
+  } catch (e) {
+    logAudit_('Restore Backup', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  if (!payload) return { success: false, message: 'Backup not found.' };
-
-  // Restore students
-  var sSheet = getOrCreateSheet_('Students');
-  if (sSheet.getLastRow() > 1) sSheet.getRange(2, 1, sSheet.getLastRow() - 1, sSheet.getLastColumn()).clearContent();
-  (payload.students || []).forEach(function (s) {
-    sSheet.appendRow([s.studentId, s.name, s.grade,
-      s.smallGroup ? 'Y' : '', s.readAloud ? 'Y' : '',
-      s.oneToOne ? 'Y' : '', s.proximity ? 'Y' : '',
-      s.prompting ? 'Y' : '', s.otherAccommodations || '']);
-  });
-
-  // Restore teachers
-  var tSheet = getOrCreateSheet_('Teachers');
-  if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
-  (payload.teachers || []).forEach(function (t) {
-    tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
-  });
-
-  // Restore rooms
-  var rSheet = getOrCreateSheet_('Rooms');
-  if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
-  (payload.rooms || []).forEach(function (r) {
-    rSheet.appendRow([r.roomName, r.roomNumber || '', r.hallway || '',
-      r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
-      r.teacherId || '', r.grade || '', r.floor || '1']);
-  });
-
-  // Restore assignments
-  var aSheet = getOrCreateSheet_('Assignments');
-  if (aSheet.getLastRow() > 1) aSheet.getRange(2, 1, aSheet.getLastRow() - 1, aSheet.getLastColumn()).clearContent();
-  (payload.assignments || []).forEach(function (a) {
-    aSheet.appendRow([a.studentId, a.roomName, a.row, a.column]);
-  });
-
-  // Restore staging
-  var stSheet = getOrCreateSheet_('Staging');
-  if (stSheet.getLastRow() > 1) stSheet.getRange(2, 1, stSheet.getLastRow() - 1, stSheet.getLastColumn()).clearContent();
-  (payload.stagingGroups || []).forEach(function (g) {
-    if (!g.studentIds.length) {
-      stSheet.appendRow([g.groupId, g.groupName, '']);
-    } else {
-      g.studentIds.forEach(function (sid) {
-        stSheet.appendRow([g.groupId, g.groupName, sid]);
-      });
-    }
-  });
-
-  // Restore filler cells
-  var fSheet = getOrCreateSheet_('FillerCells');
-  if (fSheet.getLastRow() > 1) fSheet.getRange(2, 1, fSheet.getLastRow() - 1, fSheet.getLastColumn()).clearContent();
-  (payload.fillerCells || []).forEach(function (f) {
-    fSheet.appendRow([f.roomName, f.row, f.column]);
-  });
-
-  return { success: true, message: 'Backup "' + name + '" restored — ' +
-    (payload.students || []).length + ' students, ' +
-    (payload.teachers || []).length + ' teachers, ' +
-    (payload.rooms || []).length + ' rooms.' };
 }
 
 function deleteFullBackup(name) {
