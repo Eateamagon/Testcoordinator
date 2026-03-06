@@ -314,9 +314,12 @@
     padding: 0 0.5rem;
   }
 
-  .cb {
+  .cb,
+  .form-row > label.cb {
     display: inline-flex;
+    flex-direction: row;
     align-items: center;
+    flex: 0 0 auto;
     gap: 0.5rem;
     margin-right: 1rem;
     font-size: 0.8rem;
@@ -1039,6 +1042,11 @@
     z-index: 500;
   }
 
+  .modal-overlay.hidden,
+  .loading-overlay.hidden {
+    display: none !important;
+  }
+
   .modal {
     background: var(--bp-surface);
     border: 1px solid var(--bp-cyan);
@@ -1064,12 +1072,19 @@
     padding: 0.75rem 1.5rem;
     z-index: 1000;
     box-shadow: var(--shadow-technical);
-    animation: toast-slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   .toast.hidden {
-    animation: toast-slide-down 0.3s cubic-bezier(0.4, 0, 1, 1) forwards;
+    display: none;
     pointer-events: none;
+  }
+
+  .toast-enter {
+    animation: toast-slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .toast-exit {
+    animation: toast-slide-down 0.3s cubic-bezier(0.4, 0, 1, 1) forwards;
   }
 
   @keyframes toast-slide-up {
@@ -1217,7 +1232,7 @@
   }
 
   /* ---------- Polish: Modal Entrance Animation ---------- */
-  .modal-overlay {
+  .modal-overlay:not(.hidden) {
     animation: overlay-fade-in 0.25s ease forwards;
   }
 
@@ -1482,5 +1497,56 @@
     gap: 0.75rem;
     margin-top: 1rem;
     flex-wrap: wrap;
+    align-self: flex-end;
+  }
+
+  /* ---------- Polish: Loading Content ---------- */
+  .loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.25rem;
+  }
+
+  .loading-text {
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--bp-cyan);
+  }
+
+  /* ---------- Polish: Export Button Group ---------- */
+  .export-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* ---------- Polish: Staging Toolbar Actions ---------- */
+  .staging-toolbar__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  /* ---------- Polish: Section Description ---------- */
+  .section-desc {
+    color: var(--bp-ink-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  /* ---------- Polish: Count Pop Animation ---------- */
+  .count-pop {
+    animation: count-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes count-pop {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.15); }
+    100% { transform: scale(1); }
   }
 </style>

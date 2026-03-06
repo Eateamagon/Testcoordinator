@@ -169,6 +169,14 @@
   // =========================================================================
   function initAccomModal() {
     document.getElementById('am-cancel').addEventListener('click', closeAccomModal);
+    document.getElementById('accom-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeAccomModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !document.getElementById('accom-modal').classList.contains('hidden')) {
+        closeAccomModal();
+      }
+    });
     document.getElementById('am-save').addEventListener('click', function () {
       var sid = document.getElementById('am-student-id').value;
       var s = APP.students.find(function (x) { return x.studentId === sid; });
