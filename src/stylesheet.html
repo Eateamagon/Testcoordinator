@@ -10,7 +10,7 @@
     /* Blueprint Palette */
     --bp-paper: #0f172a;
     /* Deep Slate */
-    --bp-ink: #f1f5f9;
+    --bp-ink: #f1f2f3;
     /* Cool White */
     --bp-ink-muted: #94a3b8;
     /* Muted Blue Gray */
@@ -315,7 +315,7 @@
   }
 
   .cb,
-  .form-row > label.cb {
+  .form-row>label.cb {
     display: inline-flex;
     flex-direction: row;
     align-items: center;
@@ -819,7 +819,7 @@
 
   .grid-cell.read-aloud {
     border-color: var(--bp-danger);
-    box-shadow: inset 0 0 0 1px var(--bp-danger), inset 0 0 15px rgba(249, 115, 22, 0.2);
+    box-shadow: inset 0 0 0 1px var(--bp-danger), inset 0 0 15px rgba(244, 63, 94, 0.2);
   }
 
   .grid-cell.read-aloud .cell-name {
@@ -1092,6 +1092,7 @@
       opacity: 0;
       transform: translate(-50%, 30px);
     }
+
     100% {
       opacity: 1;
       transform: translate(-50%, 0);
@@ -1103,6 +1104,7 @@
       opacity: 1;
       transform: translate(-50%, 0);
     }
+
     100% {
       opacity: 0;
       transform: translate(-50%, 20px);
@@ -1244,6 +1246,7 @@
     0% {
       opacity: 0;
     }
+
     100% {
       opacity: 1;
     }
@@ -1254,6 +1257,7 @@
       opacity: 0;
       transform: scale(0.92);
     }
+
     100% {
       opacity: 1;
       transform: scale(1);
@@ -1272,7 +1276,7 @@
   }
 
   .badge--ra {
-    box-shadow: 0 0 6px rgba(249, 115, 22, 0.15);
+    box-shadow: 0 0 6px rgba(244, 63, 94, 0.15);
   }
 
   .badge--11 {
@@ -1284,7 +1288,7 @@
   }
 
   .badge--pmpt {
-    box-shadow: 0 0 6px rgba(251, 191, 36, 0.15);
+    box-shadow: 0 0 6px rgba(244, 114, 182, 0.15);
   }
 
   .badge--other {
@@ -1545,8 +1549,16 @@
   }
 
   @keyframes count-pop {
-    0% { transform: scale(1); }
-    40% { transform: scale(1.15); }
-    100% { transform: scale(1); }
+    0% {
+      transform: scale(1);
+    }
+
+    40% {
+      transform: scale(1.15);
+    }
+
+    100% {
+      transform: scale(1);
+    }
   }
 </style>
