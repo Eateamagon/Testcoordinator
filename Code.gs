@@ -43,6 +43,12 @@ function getOrCreateSheet_(name, headers) {
   return sheet;
 }
 
+function clearSheetData_(sheet) {
+  if (sheet.getLastRow() > 1) {
+    sheet.deleteRows(2, sheet.getLastRow() - 1);
+  }
+}
+
 function ensureSheets_() {
   getOrCreateSheet_('Students', [
     'StudentID', 'Name', 'Grade',
@@ -161,6 +167,10 @@ function deleteStudent(studentId) {
     }
     removeAssignmentsForStudent_(studentId);
     removeStagingForStudent_(studentId);
+    if (!found) {
+      logAudit_('Delete Student', 'ID: ' + studentId, false, 'Student not found');
+      return { success: false, message: 'Student not found.' };
+    }
     logAudit_('Delete Student', 'ID: ' + studentId, true);
     return { success: true };
   } catch (e) {
@@ -185,6 +195,10 @@ function updateStudent(data) {
         found = true;
         break;
       }
+    }
+    if (!found) {
+      logAudit_('Update Student', 'ID: ' + data.studentId, false, 'Student not found');
+      return { success: false, message: 'Student not found.' };
     }
     logAudit_('Update Student', 'ID: ' + data.studentId, true);
     return { success: true };
@@ -236,13 +250,19 @@ function updateTeacher(data) {
   try {
     var sheet = getOrCreateSheet_('Teachers');
     var rows = sheet.getDataRange().getValues();
+    var found = false;
     for (var i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(data.teacherId)) {
         sheet.getRange(i + 1, 1, 1, 5).setValues([[
           data.teacherId, data.name, data.roomNumber || '', data.hallway || '', data.grade || ''
         ]]);
+        found = true;
         break;
       }
+    }
+    if (!found) {
+      logAudit_('Update Teacher', 'ID: ' + data.teacherId, false, 'Teacher not found');
+      return { success: false, message: 'Teacher not found.' };
     }
     logAudit_('Update Teacher', 'ID: ' + data.teacherId, true);
     return { success: true };
@@ -256,8 +276,13 @@ function deleteTeacher(teacherId) {
   try {
     var sheet = getOrCreateSheet_('Teachers');
     var data = sheet.getDataRange().getValues();
+    var found = false;
     for (var i = 1; i < data.length; i++) {
-      if (String(data[i][0]) === String(teacherId)) { sheet.deleteRow(i + 1); break; }
+      if (String(data[i][0]) === String(teacherId)) { sheet.deleteRow(i + 1); found = true; break; }
+    }
+    if (!found) {
+      logAudit_('Delete Teacher', 'ID: ' + teacherId, false, 'Teacher not found');
+      return { success: false, message: 'Teacher not found.' };
     }
     logAudit_('Delete Teacher', 'ID: ' + teacherId, true);
     return { success: true };
@@ -316,6 +341,7 @@ function updateRoom(data) {
   try {
     var sheet = getOrCreateSheet_('Rooms');
     var rows = sheet.getDataRange().getValues();
+    var found = false;
     for (var i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === data.roomName) {
         var cap = parseInt(data.maxCapacity, 10) || (parseInt(data.rows, 10) * parseInt(data.columns, 10));
@@ -324,8 +350,13 @@ function updateRoom(data) {
           parseInt(data.rows, 10), parseInt(data.columns, 10), cap,
           data.teacherId || '', data.grade || '', data.floor || '1'
         ]]);
+        found = true;
         break;
       }
+    }
+    if (!found) {
+      logAudit_('Update Room', 'Name: ' + data.roomName, false, 'Room not found');
+      return { success: false, message: 'Room not found.' };
     }
     logAudit_('Update Room', 'Name: ' + data.roomName, true);
     return { success: true };
@@ -339,11 +370,16 @@ function deleteRoom(roomName) {
   try {
     var sheet = getOrCreateSheet_('Rooms');
     var data = sheet.getDataRange().getValues();
+    var found = false;
     for (var i = 1; i < data.length; i++) {
-      if (String(data[i][0]) === roomName) { sheet.deleteRow(i + 1); break; }
+      if (String(data[i][0]) === roomName) { sheet.deleteRow(i + 1); found = true; break; }
     }
     removeAssignmentsForRoom_(roomName);
     removeFillerCellsForRoom_(roomName);
+    if (!found) {
+      logAudit_('Delete Room', 'Name: ' + roomName, false, 'Room not found');
+      return { success: false, message: 'Room not found.' };
+    }
     logAudit_('Delete Room', 'Name: ' + roomName, true);
     return { success: true };
   } catch (e) {
@@ -665,13 +701,13 @@ function loadTemplate(templateName) {
     if (!payload) return { success: false, message: 'Template not found.' };
 
     var tSheet = getOrCreateSheet_('Teachers');
-    if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+    clearSheetData_(tSheet);
     (payload.teachers || []).forEach(function (t) {
       tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
     });
 
     var rSheet = getOrCreateSheet_('Rooms');
-    if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+    clearSheetData_(rSheet);
     (payload.rooms || []).forEach(function (r) {
       rSheet.appendRow([
         r.roomName, r.roomNumber || '', r.hallway || '',
@@ -810,7 +846,7 @@ function applyRecommendations(assignments) {
   try {
     ensureSheets_();
     var sheet = getOrCreateSheet_('Assignments');
-    if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+    clearSheetData_(sheet);
     assignments.forEach(function (a) { sheet.appendRow([a.studentId, a.roomName, a.row, a.column]); });
     logAudit_('Apply Recommendations', 'Count: ' + assignments.length, true);
     return { success: true };
@@ -936,13 +972,17 @@ function generateExportHTML() {
   });
 
   // Group rooms by grade, then hallway, then floor
-  var gradeOrder = ['6', '7', '8', ''];
   var roomsByGrade = {};
+  var gradeSet = {};
   rooms.forEach(function (r) {
     var g = r.grade || 'Shared';
     if (!roomsByGrade[g]) roomsByGrade[g] = [];
     roomsByGrade[g].push(r);
+    gradeSet[g] = true;
   });
+  // Build grade order: numeric grades sorted, then 'Shared' last
+  var gradeOrder = Object.keys(gradeSet).filter(function (g) { return g !== 'Shared'; }).sort();
+  if (gradeSet['Shared']) gradeOrder.push('');
 
   var html = [];
   html.push('<!DOCTYPE html><html><head><meta charset="utf-8">');
@@ -978,17 +1018,18 @@ function generateExportHTML() {
       if (!byFloor[fl]) byFloor[fl] = [];
       byFloor[fl].push(r);
     });
+    var floors = Object.keys(byFloor).sort();
 
-    ['1', '2'].forEach(function (fl) {
+    floors.forEach(function (fl) {
       if (!byFloor[fl]) return;
       html.push('<span class="floor-label">Floor ' + fl + '</span>');
 
       byFloor[fl].forEach(function (room) {
         var teacher = teacherMap[room.teacherId];
-        var roomLabel = room.roomName;
-        if (room.roomNumber) roomLabel += ' (Rm ' + room.roomNumber + ')';
-        if (room.hallway) roomLabel += ' — ' + room.hallway;
-        if (teacher) roomLabel += ' — ' + teacher.name;
+        var roomLabel = escHtml_(room.roomName);
+        if (room.roomNumber) roomLabel += ' (Rm ' + escHtml_(room.roomNumber) + ')';
+        if (room.hallway) roomLabel += ' — ' + escHtml_(room.hallway);
+        if (teacher) roomLabel += ' — ' + escHtml_(teacher.name);
 
         html.push('<div class="no-break">');
         html.push('<h3>' + roomLabel + '</h3>');
@@ -1010,8 +1051,8 @@ function generateExportHTML() {
               if (s) {
                 var isRA = s.readAloud;
                 var codes = buildAccommodationCodes_(s);
-                var cellText = s.name;
-                if (codes) cellText += ' (' + codes + ')';
+                var cellText = escHtml_(s.name);
+                if (codes) cellText += ' (' + escHtml_(codes) + ')';
                 html.push('<td' + (isRA ? ' class="ra"' : '') + '>' + cellText + '</td>');
               } else {
                 html.push('<td></td>');
@@ -1032,8 +1073,8 @@ function generateExportHTML() {
             if (!s) return;
             var isRA = s.readAloud;
             var codes = buildAccommodationCodes_(s);
-            var line = s.name + ' (Gr ' + s.grade + ')';
-            if (codes) line += ' — ' + codes;
+            var line = escHtml_(s.name) + ' (Gr ' + escHtml_(s.grade) + ')';
+            if (codes) line += ' — ' + escHtml_(codes);
             line += ' → Seat R' + a.row + 'C' + a.column;
             if (isRA) {
               html.push('<div class="ra">' + line + '</div>');
@@ -1183,7 +1224,7 @@ function getDesignerLayouts() {
     return layouts;
   } catch (e) {
     logAudit_('Get Designer Layouts', '', false, e.toString());
-    return { success: false, message: e.toString() };
+    return [];
   }
 }
 
@@ -1286,7 +1327,7 @@ function getFullBackups() {
     return backups;
   } catch (e) {
     logAudit_('Get Backups', '', false, e.toString());
-    return { success: false, message: e.toString() };
+    return [];
   }
 }
 
@@ -1307,7 +1348,7 @@ function restoreFullBackup(name) {
     // Clear and restore each sheet
     // Students
     var sSheet = getOrCreateSheet_('Students');
-    if (sSheet.getLastRow() > 1) sSheet.getRange(2, 1, sSheet.getLastRow() - 1, sSheet.getLastColumn()).clearContent();
+    clearSheetData_(sSheet);
     (payload.students || []).forEach(function (s) {
       sSheet.appendRow([
         s.studentId, s.name, s.grade,
@@ -1319,14 +1360,14 @@ function restoreFullBackup(name) {
 
     // Teachers
     var tSheet = getOrCreateSheet_('Teachers');
-    if (tSheet.getLastRow() > 1) tSheet.getRange(2, 1, tSheet.getLastRow() - 1, tSheet.getLastColumn()).clearContent();
+    clearSheetData_(tSheet);
     (payload.teachers || []).forEach(function (t) {
       tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
     });
 
     // Rooms
     var rSheet = getOrCreateSheet_('Rooms');
-    if (rSheet.getLastRow() > 1) rSheet.getRange(2, 1, rSheet.getLastRow() - 1, rSheet.getLastColumn()).clearContent();
+    clearSheetData_(rSheet);
     (payload.rooms || []).forEach(function (r) {
       rSheet.appendRow([
         r.roomName, r.roomNumber || '', r.hallway || '',
@@ -1337,14 +1378,14 @@ function restoreFullBackup(name) {
 
     // Assignments
     var aSheet = getOrCreateSheet_('Assignments');
-    if (aSheet.getLastRow() > 1) aSheet.getRange(2, 1, aSheet.getLastRow() - 1, aSheet.getLastColumn()).clearContent();
+    clearSheetData_(aSheet);
     (payload.assignments || []).forEach(function (a) {
       aSheet.appendRow([a.studentId, a.roomName, a.row, a.column]);
     });
 
     // Staging
     var stSheet = getOrCreateSheet_('Staging');
-    if (stSheet.getLastRow() > 1) stSheet.getRange(2, 1, stSheet.getLastRow() - 1, stSheet.getLastColumn()).clearContent();
+    clearSheetData_(stSheet);
     (payload.stagingGroups || []).forEach(function (g) {
       if (!g.studentIds || !g.studentIds.length) {
         stSheet.appendRow([g.groupId, g.groupName, '']);
@@ -1355,7 +1396,7 @@ function restoreFullBackup(name) {
 
     // Filler Cells
     var fSheet = getOrCreateSheet_('FillerCells');
-    if (fSheet.getLastRow() > 1) fSheet.getRange(2, 1, fSheet.getLastRow() - 1, fSheet.getLastColumn()).clearContent();
+    clearSheetData_(fSheet);
     (payload.fillerCells || []).forEach(function (f) {
       fSheet.appendRow([f.roomName, f.row, f.column]);
     });
@@ -1372,12 +1413,22 @@ function restoreFullBackup(name) {
 }
 
 function deleteFullBackup(name) {
-  var sheet = getOrCreateSheet_('Backups');
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+  try {
+    var sheet = getOrCreateSheet_('Backups');
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === name) { sheet.deleteRow(i + 1); break; }
+    }
+    logAudit_('Delete Backup', 'Name: ' + name, true);
+    return { success: true };
+  } catch (e) {
+    logAudit_('Delete Backup', 'Name: ' + name, false, e.toString());
+    return { success: false, message: e.toString() };
   }
-  return { success: true };
+}
+
+function escHtml_(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function buildAccommodationCodes_(student) {

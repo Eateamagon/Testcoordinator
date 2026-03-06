@@ -158,7 +158,7 @@
         if (e.target.dataset.view === 'staging') renderStagingView();
         if (e.target.dataset.view === 'rooms') populateTeacherDropdown();
         if (e.target.dataset.view === 'designer') refreshDesignerLayouts();
-        if (e.target.dataset.view === 'designer') renderDesignerList(); // Added from instruction
+        if (e.target.dataset.view === 'designer') renderDesignerLayoutList();
         if (e.target.dataset.view === 'templates') refreshBackups();
       });
     });
@@ -269,6 +269,7 @@
     var list = filterStudentsByGrade(APP.students);
     if (accF) list = list.filter(function (s) { return s[accF]; });
     document.getElementById('roster-count').textContent = list.length + ' student' + (list.length !== 1 ? 's' : '');
+    animateCount(document.getElementById('roster-count'));
     var tbody = document.querySelector('#student-table tbody');
     tbody.innerHTML = '';
     list.forEach(function (s) {
@@ -280,6 +281,9 @@
         '<button class="btn btn--sm btn--accent" onclick="openAccomModal(\'' + esc(s.studentId) + '\')">IEP</button> ' +
         '<button class="btn btn--sm btn--danger" onclick="confirmDeleteStudent(\'' + esc(s.studentId) + '\')">Del</button></td>';
       tbody.appendChild(tr);
+      (function(sid) {
+        tr.addEventListener('dblclick', function() { editStudent(sid); });
+      })(s.studentId);
     });
   }
 
@@ -333,6 +337,7 @@
   function renderTeacherTable() {
     var list = filterByGrade(APP.teachers);
     document.getElementById('teacher-count').textContent = list.length + ' teacher' + (list.length !== 1 ? 's' : '');
+    animateCount(document.getElementById('teacher-count'));
     var tbody = document.querySelector('#teacher-table tbody'); tbody.innerHTML = '';
     list.forEach(function (t) {
       var tr = document.createElement('tr');
@@ -341,6 +346,9 @@
         '<button class="btn btn--sm btn--secondary" onclick="editTeacher(\'' + esc(t.teacherId) + '\')">Edit</button> ' +
         '<button class="btn btn--sm btn--danger" onclick="confirmDeleteTeacher(\'' + esc(t.teacherId) + '\')">Del</button></td>';
       tbody.appendChild(tr);
+      (function(tid) {
+        tr.addEventListener('dblclick', function() { editTeacher(tid); });
+      })(t.teacherId);
     });
   }
 
@@ -379,6 +387,7 @@
     var container = document.getElementById('room-list'); container.innerHTML = '';
     var list = filterRooms(APP.rooms);
     document.getElementById('room-count').textContent = list.length + ' room' + (list.length !== 1 ? 's' : '');
+    animateCount(document.getElementById('room-count'));
     if (!list.length) { container.innerHTML = '<p class="muted">No rooms yet.</p>'; return; }
 
     // Group by floor, then hallway
@@ -589,6 +598,14 @@
     document.getElementById('filler-mode').addEventListener('change', function () { APP.fillerMode = this.checked; renderGrid(); });
     document.getElementById('btn-export-pdf').addEventListener('click', function () { runExport('pdf', this); });
     document.getElementById('btn-export-word').addEventListener('click', function () { runExport('word', this); });
+
+    // Event delegation set up ONCE (not per-render)
+    document.getElementById('unassigned-list').addEventListener('click', function (e) {
+      if (e.target.classList.contains('btn-inline-accom')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
+    });
+    document.getElementById('grid-container').addEventListener('click', function (e) {
+      if (e.target.classList.contains('cell-iep-btn')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
+    });
   }
 
   function renderAssignView() {
@@ -620,9 +637,6 @@
       li.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', s.studentId); li.classList.add('dragging'); });
       li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
       ul.appendChild(li);
-    });
-    ul.addEventListener('click', function (e) {
-      if (e.target.classList.contains('btn-inline-accom')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
     });
   }
 
@@ -748,10 +762,6 @@
         container.appendChild(cell);
       }
     }
-
-    container.addEventListener('click', function (e) {
-      if (e.target.classList.contains('cell-iep-btn')) { e.stopPropagation(); openAccomModal(e.target.dataset.studentId); }
-    });
 
     // Warnings
     var warnMsgs = [];
@@ -892,8 +902,23 @@
   }
 
   function toast(msg) {
-    var el = document.getElementById('toast'); el.textContent = msg; el.classList.remove('hidden');
-    clearTimeout(el._timer); el._timer = setTimeout(function () { el.classList.add('hidden'); }, 4000);
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.remove('hidden', 'toast-exit');
+    el.classList.add('toast-enter');
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function () {
+      el.classList.remove('toast-enter');
+      el.classList.add('toast-exit');
+      setTimeout(function () { el.classList.add('hidden'); }, 300);
+    }, 3500);
+  }
+
+  function animateCount(el) {
+    if (!el) return;
+    el.classList.remove('count-pop');
+    void el.offsetWidth;
+    el.classList.add('count-pop');
   }
 
   function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
@@ -976,6 +1001,16 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Delete' && APP.designerSelectedId) {
         deleteDesignerRoom(APP.designerSelectedId);
+      }
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+      var views = ['students', 'teachers', 'rooms', 'designer', 'staging', 'assign', 'templates'];
+      var idx = parseInt(e.key, 10) - 1;
+      if (idx >= 0 && idx < views.length) {
+        var btn = document.querySelector('.nav-btn[data-view="' + views[idx] + '"]');
+        if (btn) btn.click();
       }
     });
 

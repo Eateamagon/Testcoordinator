@@ -43,10 +43,10 @@
 
   <!-- ===== Loading Overlay ===== -->
   <div id="loading" class="loading-overlay hidden">
-    <div class="spinner"></div>
-    <p
-      style="color: var(--bp-cyan); font-family: var(--font-display); font-weight: 700; letter-spacing: 2px; margin-top: 1rem;">
-      INITIALIZING...</p>
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p class="loading-text">PROCESSING...</p>
+    </div>
   </div>
 
   <!-- ===== Accommodation Quick-Edit Modal ===== -->
@@ -261,8 +261,8 @@
       </div>
       <div class="panel panel--staging card">
         <div class="staging-toolbar">
-          <h2>Staging Groups // [STG_ALLOC]</h2>
-          <div class="form-row" style="margin-bottom:0">
+          <h2>Staging Groups</h2>
+          <div class="staging-toolbar__actions">
             <input type="text" id="new-group-name" placeholder="New group name...">
             <button class="btn btn--primary btn--sm" id="btn-create-group">Create Group</button>
           </div>
@@ -304,8 +304,10 @@
           </label>
           <label class="cb filler-toggle"><input type="checkbox" id="filler-mode"> Filler Mode</label>
           <button class="btn btn--primary" id="btn-finalize">Finalize</button>
-          <button class="btn btn--gold" id="btn-export-pdf">Export PDF</button>
-          <button class="btn btn--gold" id="btn-export-word">Export Word</button>
+          <div class="export-group">
+            <button class="btn btn--gold" id="btn-export-pdf">Export PDF</button>
+            <button class="btn btn--gold" id="btn-export-word">Export Word</button>
+          </div>
         </div>
         <div id="grid-room-info" class="room-info-bar"></div>
         <div class="proctor-label">PROCTOR STATION (Row 1)</div>
@@ -324,7 +326,7 @@
     <div class="designer-layout">
       <!-- Left Sidebar: Palette & Actions -->
       <div class="designer-sidebar card">
-        <h2>Room Specifications // [TYPES]</h2>
+        <h2>Room Types</h2>
         <div id="designer-palette" class="palette"></div>
         <div class="designer-divider"></div>
         <h2>Floor View</h2>
@@ -354,7 +356,7 @@
         <h2>Saved Layouts</h2>
         <div class="form-row" style="margin-bottom:.35rem">
           <input type="text" id="designer-layout-name" placeholder="Layout name..." style="flex:1">
-          <div class="form-actions" style="align-self:flex-end;margin-top:0">
+          <div class="form-actions">
             <button class="btn btn--primary btn--sm" id="btn-save-layout">Save</button>
           </div>
         </div>
@@ -396,11 +398,11 @@
   <section id="view-templates" class="view hidden">
     <div class="card">
       <h2>School Layout Templates</h2>
-      <p class="muted" style="margin-bottom:.75rem">Save the current Teachers + Rooms configuration as a reusable
+      <p class="muted section-desc">Save the current Teachers + Rooms configuration as a reusable
         template. Loading a template replaces all teachers and rooms.</p>
       <div class="form-row">
         <label>Template Name<input type="text" id="tpl-name" placeholder="e.g. Spring 2026 SOLs"></label>
-        <div class="form-actions" style="align-self:flex-end">
+        <div class="form-actions">
           <button class="btn btn--primary" id="btn-save-template">Save Current Layout</button>
         </div>
       </div>
@@ -411,11 +413,11 @@
     </div>
     <div class="card">
       <h2>Full Data Backup</h2>
-      <p class="muted" style="margin-bottom:.75rem">Save a complete snapshot of all data (students, teachers, rooms,
+      <p class="muted section-desc">Save a complete snapshot of all data (students, teachers, rooms,
         assignments, staging, filler cells). Restoring a backup replaces all current data.</p>
       <div class="form-row">
         <label>Backup Name<input type="text" id="backup-name" placeholder="e.g. Before Spring SOLs"></label>
-        <div class="form-actions" style="align-self:flex-end">
+        <div class="form-actions">
           <button class="btn btn--gold" id="btn-create-backup">Create Backup</button>
         </div>
       </div>
