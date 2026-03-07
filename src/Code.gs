@@ -26,11 +26,22 @@ function include(filename) {
 // Sheet Helpers
 // ---------------------------------------------------------------------------
 
+// Execution-level cache to minimize Spreadsheet service calls
+var CACHE_ = {
+  ss: null,
+  sheets: {}
+};
+
 function getSpreadsheet_() {
-  return SpreadsheetApp.getActiveSpreadsheet();
+  if (!CACHE_.ss) {
+    CACHE_.ss = SpreadsheetApp.getActiveSpreadsheet();
+  }
+  return CACHE_.ss;
 }
 
 function getOrCreateSheet_(name, headers) {
+  if (CACHE_.sheets[name]) return CACHE_.sheets[name];
+  
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(name);
   if (!sheet) {
@@ -40,6 +51,7 @@ function getOrCreateSheet_(name, headers) {
       sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
     }
   }
+  CACHE_.sheets[name] = sheet;
   return sheet;
 }
 
@@ -49,7 +61,9 @@ function clearSheetData_(sheet) {
   }
 }
 
+var ENSURED_ = false;
 function ensureSheets_() {
+  if (ENSURED_) return;
   getOrCreateSheet_('Students', [
     'StudentID', 'Name', 'Grade',
     'SmallGroup', 'ReadAloud', 'OneToOne',
@@ -83,6 +97,7 @@ function ensureSheets_() {
   getOrCreateSheet_('AuditLog', [
     'Timestamp', 'User', 'Action', 'Details', 'Success', 'ErrorMessage'
   ]);
+  ENSURED_ = true;
 }
 
 /**
@@ -441,8 +456,16 @@ function toggleFillerCell(roomName, row, col) {
 function removeFillerCellsForRoom_(roomName) {
   var sheet = getOrCreateSheet_('FillerCells');
   var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][0]) === roomName) sheet.deleteRow(i + 1);
+  if (data.length <= 1) return;
+  var newData = data.slice(0, 1);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) !== roomName) newData.push(data[i]);
+  }
+  if (newData.length !== data.length) {
+    clearSheetData_(sheet);
+    if (newData.length > 1) {
+      sheet.getRange(2, 1, newData.length - 1, newData[0].length).setValues(newData.slice(1));
+    }
   }
 }
 
@@ -498,16 +521,33 @@ function getAssignments() {
 function removeAssignmentsForStudent_(studentId) {
   var sheet = getOrCreateSheet_('Assignments');
   var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][0]) === String(studentId)) sheet.deleteRow(i + 1);
+  if (data.length <= 1) return;
+  var newData = data.slice(0, 1);
+  var sidStr = String(studentId);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) !== sidStr) newData.push(data[i]);
+  }
+  if (newData.length !== data.length) {
+    clearSheetData_(sheet);
+    if (newData.length > 1) {
+      sheet.getRange(2, 1, newData.length - 1, newData[0].length).setValues(newData.slice(1));
+    }
   }
 }
 
 function removeAssignmentsForRoom_(roomName) {
   var sheet = getOrCreateSheet_('Assignments');
   var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][1]) === roomName) sheet.deleteRow(i + 1);
+  if (data.length <= 1) return;
+  var newData = data.slice(0, 1);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][1]) !== roomName) newData.push(data[i]);
+  }
+  if (newData.length !== data.length) {
+    clearSheetData_(sheet);
+    if (newData.length > 1) {
+      sheet.getRange(2, 1, newData.length - 1, newData[0].length).setValues(newData.slice(1));
+    }
   }
 }
 
@@ -598,8 +638,17 @@ function deleteStagingGroup(groupId) {
 function removeStagingForStudent_(studentId) {
   var sheet = getOrCreateSheet_('Staging');
   var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][2]) === String(studentId)) sheet.deleteRow(i + 1);
+  if (data.length <= 1) return;
+  var newData = data.slice(0, 1);
+  var sidStr = String(studentId);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][2]) !== sidStr) newData.push(data[i]);
+  }
+  if (newData.length !== data.length) {
+    clearSheetData_(sheet);
+    if (newData.length > 1) {
+      sheet.getRange(2, 1, newData.length - 1, newData[0].length).setValues(newData.slice(1));
+    }
   }
 }
 
@@ -847,7 +896,10 @@ function applyRecommendations(assignments) {
     ensureSheets_();
     var sheet = getOrCreateSheet_('Assignments');
     clearSheetData_(sheet);
-    assignments.forEach(function (a) { sheet.appendRow([a.studentId, a.roomName, a.row, a.column]); });
+    if (assignments.length > 0) {
+      var rows = assignments.map(function(a) { return [a.studentId, a.roomName, a.row, a.column]; });
+      sheet.getRange(2, 1, rows.length, 4).setValues(rows);
+    }
     logAudit_('Apply Recommendations', 'Count: ' + assignments.length, true);
     return { success: true };
   } catch (e) {
@@ -1104,8 +1156,7 @@ function loadExampleData() {
 
   // --- Example Teachers ---
   var tSheet = getOrCreateSheet_('Teachers');
-  var existingTeachers = tSheet.getDataRange().getValues();
-  if (existingTeachers.length <= 1) {
+  if (tSheet.getLastRow() <= 1) {
     var teachers = [
       ['T001', 'Mrs. Sarah Johnson',    '101', '6th Grade Hall',  '6'],
       ['T002', 'Mr. David Williams',    '102', '6th Grade Hall',  '6'],
@@ -1118,15 +1169,13 @@ function loadExampleData() {
       ['T009', 'Ms. Jennifer Anderson', 'LIB', 'Main Hall',       ''],
       ['T010', 'Coach Thomas Martinez', 'GYM', 'Athletics Wing',  '']
     ];
-    teachers.forEach(function (t) { tSheet.appendRow(t); });
+    tSheet.getRange(2, 1, teachers.length, 5).setValues(teachers);
   }
 
   // --- Example Rooms ---
   var rSheet = getOrCreateSheet_('Rooms');
-  var existingRooms = rSheet.getDataRange().getValues();
-  if (existingRooms.length <= 1) {
+  if (rSheet.getLastRow() <= 1) {
     var rooms = [
-      // RoomName, RoomNumber, Hallway, Rows, Cols, MaxCap, TeacherID, Grade, Floor
       ['Room 101',      '101', '6th Grade Hall',  5, 6, 30, 'T001', '6', '1'],
       ['Room 102',      '102', '6th Grade Hall',  5, 6, 30, 'T002', '6', '1'],
       ['Room 103',      '103', '6th Grade Hall',  5, 6, 30, 'T003', '6', '1'],
@@ -1142,15 +1191,13 @@ function loadExampleData() {
       ['Art Room',      '220', 'Electives Wing',  5, 5, 25, '',     '',  '2'],
       ['Music Room',    '221', 'Electives Wing',  6, 6, 36, '',     '',  '2']
     ];
-    rooms.forEach(function (r) { rSheet.appendRow(r); });
+    rSheet.getRange(2, 1, rooms.length, 9).setValues(rooms);
   }
 
-  // --- Example Students (fictional names, various accommodations) ---
+  // --- Example Students ---
   var sSheet = getOrCreateSheet_('Students');
-  var existingStudents = sSheet.getDataRange().getValues();
-  if (existingStudents.length <= 1) {
+  if (sSheet.getLastRow() <= 1) {
     var students = [
-      // StudentID, Name, Grade, SG, RA, 1:1, PROX, PMPT, Other
       ['S1001', 'Alex Thompson',   '6', 'Y', '',  '',  '',  '',  ''],
       ['S1002', 'Jordan Lee',      '6', '',  'Y', '',  '',  '',  ''],
       ['S1003', 'Casey Smith',     '6', '',  '',  '',  'Y', '',  ''],
@@ -1175,7 +1222,7 @@ function loadExampleData() {
       ['S3007', 'Rowan King',      '8', 'Y', '',  '',  '',  '',  ''],
       ['S3008', 'Sage Allen',      '8', '',  '',  '',  '',  '',  '']
     ];
-    students.forEach(function (s) { sSheet.appendRow(s); });
+    sSheet.getRange(2, 1, students.length, 9).setValues(students);
   }
 
   return { success: true, message: 'Example data loaded — 10 teachers, 14 rooms, 23 students with accommodations.' };
@@ -1345,61 +1392,69 @@ function restoreFullBackup(name) {
       return { success: false, message: 'Backup not found.' };
     }
 
-    // Clear and restore each sheet
+    // Clear and restore each sheet in bulk
+    
     // Students
     var sSheet = getOrCreateSheet_('Students');
     clearSheetData_(sSheet);
-    (payload.students || []).forEach(function (s) {
-      sSheet.appendRow([
+    var sRows = (payload.students || []).map(function(s) {
+      return [
         s.studentId, s.name, s.grade,
         s.smallGroup ? 'Y' : '', s.readAloud ? 'Y' : '',
         s.oneToOne ? 'Y' : '', s.proximity ? 'Y' : '',
         s.prompting ? 'Y' : '', s.otherAccommodations || ''
-      ]);
+      ];
     });
+    if (sRows.length > 0) sSheet.getRange(2, 1, sRows.length, 9).setValues(sRows);
 
     // Teachers
     var tSheet = getOrCreateSheet_('Teachers');
     clearSheetData_(tSheet);
-    (payload.teachers || []).forEach(function (t) {
-      tSheet.appendRow([t.teacherId, t.name, t.roomNumber, t.hallway, t.grade]);
+    var tRows = (payload.teachers || []).map(function(t) {
+      return [t.teacherId, t.name, t.roomNumber, t.hallway, t.grade];
     });
+    if (tRows.length > 0) tSheet.getRange(2, 1, tRows.length, 5).setValues(tRows);
 
     // Rooms
     var rSheet = getOrCreateSheet_('Rooms');
     clearSheetData_(rSheet);
-    (payload.rooms || []).forEach(function (r) {
-      rSheet.appendRow([
+    var rRows = (payload.rooms || []).map(function(r) {
+      return [
         r.roomName, r.roomNumber || '', r.hallway || '',
         r.rows, r.columns, r.maxCapacity || (r.rows * r.columns),
         r.teacherId || '', r.grade || '', r.floor || '1'
-      ]);
+      ];
     });
+    if (rRows.length > 0) rSheet.getRange(2, 1, rRows.length, 9).setValues(rRows);
 
     // Assignments
     var aSheet = getOrCreateSheet_('Assignments');
     clearSheetData_(aSheet);
-    (payload.assignments || []).forEach(function (a) {
-      aSheet.appendRow([a.studentId, a.roomName, a.row, a.column]);
+    var aRows = (payload.assignments || []).map(function(a) {
+      return [a.studentId, a.roomName, a.row, a.column];
     });
+    if (aRows.length > 0) aSheet.getRange(2, 1, aRows.length, 4).setValues(aRows);
 
     // Staging
     var stSheet = getOrCreateSheet_('Staging');
     clearSheetData_(stSheet);
+    var stRows = [];
     (payload.stagingGroups || []).forEach(function (g) {
       if (!g.studentIds || !g.studentIds.length) {
-        stSheet.appendRow([g.groupId, g.groupName, '']);
+        stRows.push([g.groupId, g.groupName, '']);
       } else {
-        g.studentIds.forEach(function (sid) { stSheet.appendRow([g.groupId, g.groupName, sid]); });
+        g.studentIds.forEach(function (sid) { stRows.push([g.groupId, g.groupName, sid]); });
       }
     });
+    if (stRows.length > 0) stSheet.getRange(2, 1, stRows.length, 3).setValues(stRows);
 
     // Filler Cells
     var fSheet = getOrCreateSheet_('FillerCells');
     clearSheetData_(fSheet);
-    (payload.fillerCells || []).forEach(function (f) {
-      fSheet.appendRow([f.roomName, f.row, f.column]);
+    var fRows = (payload.fillerCells || []).map(function(f) {
+      return [f.roomName, f.row, f.column];
     });
+    if (fRows.length > 0) fSheet.getRange(2, 1, fRows.length, 3).setValues(fRows);
 
     logAudit_('Restore Backup', 'Name: ' + name, true);
     return { success: true, message: 'Backup "' + name + '" restored — ' +
