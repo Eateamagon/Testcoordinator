@@ -596,6 +596,15 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .student-chip > strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 0;
   }
 
   .student-chip:hover {
@@ -609,6 +618,7 @@
   .chip-meta {
     color: var(--muted);
     font-size: 0.75rem;
+    flex-shrink: 0;
   }
 
   /* Staging Groups */
