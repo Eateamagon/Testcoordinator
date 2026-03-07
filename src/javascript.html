@@ -32,22 +32,73 @@
   function zg() { return GRID * APP.designerZoom; }
 
   var ROOM_TYPES = {
-    classroom: { label: 'Classroom', color: '#3b82f6', bg: '#dbeafe', icon: '\u{1F4DA}' },
-    office: { label: 'Office', color: '#64748b', bg: '#f1f5f9', icon: '\u{1F4BC}' },
-    library: { label: 'Library', color: '#d97706', bg: '#fef3c7', icon: '\u{1F4D6}' },
-    lab: { label: 'Science Lab', color: '#0891b2', bg: '#cffafe', icon: '\u{1F52C}' },
-    gym: { label: 'Gymnasium', color: '#ea580c', bg: '#fed7aa', icon: '\u{1F3C0}' },
-    cafeteria: { label: 'Cafeteria', color: '#ca8a04', bg: '#fef9c3', icon: '\u{1F372}' },
-    restroom: { label: 'Restroom', color: '#6b7280', bg: '#f3f4f6', icon: '\u{1F6BB}' },
-    hallway: { label: 'Hallway', color: '#9ca3af', bg: '#f9fafb', icon: '\u{1F6AA}' },
-    auditorium: { label: 'Auditorium', color: '#7c3aed', bg: '#ede9fe', icon: '\u{1F3B5}' },
-    storage: { label: 'Storage', color: '#92400e', bg: '#fef3c7', icon: '\u{1F4E6}' }
+    classroom:  { label: 'Classroom',   color: '#1d4ed8', bg: '#dbeafe', colorDark: '#60a5fa', bgDark: '#1e293b', icon: '\u{1F4DA}' },
+    office:     { label: 'Office',      color: '#4b5563', bg: '#f3f4f6', colorDark: '#9ca3af', bgDark: '#1f2937', icon: '\u{1F4BC}' },
+    library:    { label: 'Library',     color: '#92400e', bg: '#fef3c7', colorDark: '#fbbf24', bgDark: '#292524', icon: '\u{1F4D6}' },
+    lab:        { label: 'Science Lab', color: '#0d7377', bg: '#cffafe', colorDark: '#2dd4bf', bgDark: '#1a2e35', icon: '\u{1F52C}' },
+    gym:        { label: 'Gymnasium',   color: '#c2410c', bg: '#fed7aa', colorDark: '#f97316', bgDark: '#292018', icon: '\u{1F3C0}' },
+    cafeteria:  { label: 'Cafeteria',   color: '#854d0e', bg: '#fef9c3', colorDark: '#fbbf24', bgDark: '#292524', icon: '\u{1F372}' },
+    restroom:   { label: 'Restroom',    color: '#4b5563', bg: '#f3f4f6', colorDark: '#9ca3af', bgDark: '#1f2937', icon: '\u{1F6BB}' },
+    hallway:    { label: 'Hallway',     color: '#6b7280', bg: '#f9fafb', colorDark: '#d1d5db', bgDark: '#111827', icon: '\u{1F6AA}' },
+    auditorium: { label: 'Auditorium',  color: '#7c3aed', bg: '#ede9fe', colorDark: '#a78bfa', bgDark: '#1e1b2e', icon: '\u{1F3B5}' },
+    storage:    { label: 'Storage',     color: '#78350f', bg: '#fef3c7', colorDark: '#d97706', bgDark: '#292524', icon: '\u{1F4E6}' }
   };
+
+  // =========================================================================
+  // Theme Toggle
+  // =========================================================================
+  function isDarkTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark';
+  }
+
+  function initThemeToggle() {
+    var saved = localStorage.getItem('tc-theme');
+    if (saved === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+    updateThemeUI();
+
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (isDarkTheme()) {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('tc-theme', 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        localStorage.setItem('tc-theme', 'dark');
+      }
+      updateThemeUI();
+      if (document.getElementById('designer-canvas')) {
+        renderDesignerCanvas();
+        rebuildDesignerPalette();
+      }
+    });
+  }
+
+  function updateThemeUI() {
+    var dark = isDarkTheme();
+    var icon = document.getElementById('theme-icon');
+    var label = document.getElementById('theme-label');
+    if (icon) icon.innerHTML = dark ? '\u2600' : '\u263E';
+    if (label) label.textContent = dark ? 'LIGHT' : 'DARK';
+    var btn = document.getElementById('theme-toggle');
+    if (btn) btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+  }
+
+  function getRoomColor(typeInfo) {
+    return isDarkTheme() ? typeInfo.colorDark : typeInfo.color;
+  }
+
+  function getRoomBg(typeInfo) {
+    return isDarkTheme() ? typeInfo.bgDark : typeInfo.bg;
+  }
 
   // =========================================================================
   // Bootstrap
   // =========================================================================
   document.addEventListener('DOMContentLoaded', function () {
+    initThemeToggle();
     initGradeSwitcher();
     initFloorSwitcher();
     initNav();
@@ -143,15 +194,11 @@
         e.target.classList.add('active');
         document.querySelectorAll('.view').forEach(function (v) {
           v.classList.add('hidden');
-          v.style.animation = 'none'; // Reset animation
         });
 
         var targetView = document.getElementById('view-' + e.target.dataset.view);
         if (targetView) {
           targetView.classList.remove('hidden');
-          // Trigger reflow to restart animation
-          void targetView.offsetWidth;
-          targetView.style.animation = 'fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards';
         }
 
         if (e.target.dataset.view === 'assign') renderAssignView();
@@ -923,10 +970,7 @@
   }
 
   function animateCount(el) {
-    if (!el) return;
-    el.classList.remove('count-pop');
-    void el.offsetWidth;
-    el.classList.add('count-pop');
+    // No-op in brutalist theme
   }
 
   function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
@@ -954,15 +998,16 @@
   // School Layout Designer (Drawing Tool)
   // =========================================================================
 
-  function initDesigner() {
-    // Build palette
+  function rebuildDesignerPalette() {
     var palette = document.getElementById('designer-palette');
+    if (!palette) return;
+    palette.innerHTML = '';
     Object.keys(ROOM_TYPES).forEach(function (key) {
       var t = ROOM_TYPES[key];
       var btn = document.createElement('button');
       btn.className = 'palette-btn' + (key === APP.designerTool ? ' active' : '');
       btn.dataset.type = key;
-      btn.innerHTML = '<span class="palette-swatch" style="background:' + t.color + '"></span><span class="palette-icon">' + t.icon + '</span>' + t.label;
+      btn.innerHTML = '<span class="palette-swatch" style="background:' + getRoomColor(t) + '"></span><span class="palette-icon">' + t.icon + '</span>' + t.label;
       btn.addEventListener('click', function () {
         palette.querySelectorAll('.palette-btn').forEach(function (b) { b.classList.remove('active'); });
         btn.classList.add('active');
@@ -970,6 +1015,11 @@
       });
       palette.appendChild(btn);
     });
+  }
+
+  function initDesigner() {
+    // Build palette
+    rebuildDesignerPalette();
 
     // Floor view selector (Both / Floor 1 / Floor 2)
     document.querySelectorAll('.designer-floor-btn').forEach(function (btn) {
@@ -1292,8 +1342,8 @@
       el.style.top = (room.gridY * gridPx) + 'px';
       el.style.width = (room.gridW * gridPx) + 'px';
       el.style.height = (room.gridH * gridPx) + 'px';
-      el.style.backgroundColor = typeInfo.bg;
-      el.style.borderColor = typeInfo.color;
+      el.style.backgroundColor = getRoomBg(typeInfo);
+      el.style.borderColor = getRoomColor(typeInfo);
 
       var isSmall = room.gridW <= 3 || room.gridH <= 2;
       el.innerHTML =

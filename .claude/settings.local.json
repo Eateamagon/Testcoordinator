@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n '\\\\\\\\*' \"c:/Users/etruslow/Documents/GitHub/Testcoordinator/src/stylesheet.html\")",
+      "Bash(python3 -c \":*)",
+      "WebFetch(domain:www.w3.org)",
+      "Bash(node -e \"const fs=require\\(''fs''\\);const c=fs.readFileSync\\(''c:/Users/etruslow/Documents/GitHub/Testcoordinator/src/stylesheet.html'',''utf8''\\);const css=c.replace\\(''<style>'',''''\\).replace\\(''</style>'',''''\\);const o=\\(css.match\\(/{/g\\)||[]\\).length;const cl=\\(css.match\\(/}/g\\)||[]\\).length;console.log\\(''Braces:'',o,''/'',cl,o===cl?''OK'':''MISMATCH''\\);\")",
+      "Bash(git -C \"c:/Users/etruslow/Documents/GitHub/Testcoordinator\" log --oneline -5)",
+      "Bash(git -C \"c:/Users/etruslow/Documents/GitHub/Testcoordinator\" diff --stat)"
+    ]
+  }
+}
